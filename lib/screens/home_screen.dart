@@ -294,7 +294,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
                     const SizedBox(height: 16),
 
-                    // ── Wake word hint ──
+                    // ── Wake word hint (Coming Soon) ──
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -314,21 +314,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             child: const Icon(Icons.hearing, size: 18, color: Color(0xFF00D2D3)),
                           ),
                           const SizedBox(width: 12),
-                          const Expanded(
+                          Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('Voice Activation',
-                                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                                Row(
+                                  children: [
+                                    Text('Voice Activation',
+                                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF6C5CE7),
+                                        borderRadius: const BorderRadius.all(Radius.circular(4)),
+                                      ),
+                                      child: const Text('Coming Soon',
+                                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.white)),
+                                    ),
+                                  ],
+                                ),
                                 SizedBox(height: 2),
                                 Text('Say "Hey Clozr" to start hands-free',
                                     style: TextStyle(fontSize: 12, color: Color(0xFF8B8BA0))),
                               ],
                             ),
-                          ),
-                          Transform.rotate(
-                            angle: 3.14159 / 2,
-                            child: const Icon(Icons.chevron_right, color: Color(0xFF8B8BA0), size: 20),
                           ),
                         ],
                       ),

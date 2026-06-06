@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
-DATA_DIR = Path("/home/ron/.openclaw/workspace/apps/jarvis_meeting_app/proposals")
+DATA_DIR = Path(os.environ.get("CLOZR_DATA_DIR", str(Path(__file__).parent / "proposals")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # ⚠️ SECURITY: Telegram token MUST come from environment — no hardcoded fallback

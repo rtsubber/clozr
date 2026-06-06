@@ -39,7 +39,7 @@ import bcrypt
 # Password hashing — bcrypt directly (passlib has compat issues)
 # ── Config ──
 
-DATA_DIR = Path(os.environ.get("CLOZR_DATA_DIR", "/home/ron/.openclaw/workspace/apps/jarvis_meeting_app/data"))
+DATA_DIR = Path(os.environ.get("CLOZR_DATA_DIR", str(Path(__file__).parent.parent / "data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "clozr.db"
 
@@ -684,7 +684,7 @@ async def add_permissions_policy(request: Request, call_next):
     return response
 
 # CORS — tighten from * (L1)
-ALLOWED_ORIGINS = os.environ.get("CLOZR_ALLOWED_ORIGINS", "http://localhost:8510,https://ron-system-product-name.tail38a93d.ts.net,https://brandbooststudio.co,https://clozr.brandbooststudio.co").split(",")
+ALLOWED_ORIGINS = os.environ.get("CLOZR_ALLOWED_ORIGINS", "http://localhost:8510,https://brandbooststudio.co,https://clozr.brandbooststudio.co").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -2002,14 +2002,14 @@ async def update_account(
 # ── Static file serving (for Flutter web build) ──
 
 STATIC_DIR = Path(os.environ.get("CLOZR_STATIC_DIR",
-    "/home/ron/.openclaw/workspace/apps/jarvis_meeting_app/build/web"))
+    str(Path(__file__).parent.parent / "build" / "web")))
 
 AUDIO_DIR = Path(os.environ.get("CLOZR_AUDIO_DIR",
-    "/home/ron/.openclaw/workspace/apps/jarvis_meeting_app/audio"))
+    str(Path(__file__).parent.parent / "audio")))
 
 # ── Static Pages (privacy, etc.) ──
 STATIC_PAGES_DIR = Path(os.environ.get("CLOZR_STATIC_PAGES_DIR",
-    "/home/ron/.openclaw/workspace/apps/jarvis_meeting_app/static"))
+    str(Path(__file__).parent.parent / "static")))
 
 if STATIC_PAGES_DIR.exists():
     app.mount("/static-pages", StaticFiles(directory=STATIC_PAGES_DIR, html=True), name="static-pages")
