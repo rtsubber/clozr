@@ -58,3 +58,4 @@ proposals/
 
 # Service files with passwords
 *.service
+CLOZR_FULL_SOURCE.txt
