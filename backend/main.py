@@ -52,6 +52,11 @@ LOCALEYE_API_KEY = os.environ.get("CLOZR_LOCALEYE_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("CLOZR_TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("CLOZR_TELEGRAM_CHAT_ID", "")
 
+# ── Fingerprint / Free Tier Config ──
+LOCALEYE_FP_URL = os.environ.get("CLOZR_LOCALEYE_FP_URL", "https://localeye.co")
+FREE_MEETING_LIMIT = int(os.environ.get("CLOZR_FREE_MEETING_LIMIT", "5"))
+FP_SOURCE_APP = "clozr"
+
 # Fail-closed: refuse to start without required secrets
 REQUIRED_SECRETS = ["CLOZR_JWT_SECRET"]
 _missing = [s for s in REQUIRED_SECRETS if not os.environ.get(s)]
@@ -1283,6 +1288,75 @@ async def update_speaker_mapping(
     }
 
 
+# ── Fingerprint / Free Tier Check ──
+
+class FingerprintCheckRequest(BaseModel):
+    """Proxy fingerprint check to Local-Eye."""
+    fingerprint_hash: str = Field(..., min_length=64, max_length=64)
+    action: str = Field("free_meeting", max_length=50)
+
+
+@app.get("/api/fingerprint/status")
+async def fingerprint_status(account_id: str = Depends(verify_token), db: Session = Depends(get_db)):
+    """Check how many meetings this account has created (for free tier display)."""
+    count = db.query(Meeting).filter(Meeting.account_id == account_id).count()
+    return {
+        "meetings_created": count,
+        "free_limit": FREE_MEETING_LIMIT,
+        "remaining": max(0, FREE_MEETING_LIMIT - count),
+        "limit_reached": count >= FREE_MEETING_LIMIT,
+    }
+
+
+@app.post("/api/fingerprint/check")
+async def fingerprint_check(
+    body: FingerprintCheckRequest,
+    request: Request,
+    account_id: str = Depends(verify_token),
+    db: Session = Depends(get_db),
+):
+    """
+    Check fingerprint against Local-Eye to see if this device has exceeded
+    the free meeting limit. Also checks account meeting count.
+    Returns the more restrictive of the two.
+    """
+    # Account-based count
+    account_count = db.query(Meeting).filter(Meeting.account_id == account_id).count()
+    account_limit_reached = account_count >= FREE_MEETING_LIMIT
+
+    # Fingerprint-based check via Local-Eye
+    fp_result = {"limit_reached": False, "count": 0}  # default fallback
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
+                f"{LOCALEYE_FP_URL}/v1/fingerprint/check",
+                json={
+                    "fingerprint_hash": body.fingerprint_hash,
+                    "source_app": FP_SOURCE_APP,
+                    "action": body.action,
+                    "limit": FREE_MEETING_LIMIT,
+                },
+            )
+            if resp.status_code == 200:
+                fp_result = resp.json()
+    except Exception:
+        logging.warning("Local-Eye fingerprint check failed, using account count only")
+
+    # Use the more restrictive limit
+    effective_count = max(account_count, fp_result.get("count", 0))
+    effective_remaining = max(0, FREE_MEETING_LIMIT - effective_count)
+    effective_limit_reached = account_limit_reached or fp_result.get("limit_reached", False)
+
+    return {
+        "account_count": account_count,
+        "fingerprint_count": fp_result.get("count", 0),
+        "effective_count": effective_count,
+        "free_limit": FREE_MEETING_LIMIT,
+        "remaining": effective_remaining,
+        "limit_reached": effective_limit_reached,
+    }
+
+
 # ── Meetings CRUD ──
 
 @app.get("/api/meetings")
@@ -1307,6 +1381,14 @@ async def create_meeting(
     account_id: str = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
+    # Free tier enforcement — check account meeting count
+    meeting_count = db.query(Meeting).filter(Meeting.account_id == account_id).count()
+    if meeting_count >= FREE_MEETING_LIMIT:
+        raise HTTPException(
+            403,
+            f"Free tier limit reached ({FREE_MEETING_LIMIT} meetings). Upgrade to Pro for unlimited meetings.",
+        )
+
     meeting = Meeting(
         account_id=account_id,
         title=data.title,
