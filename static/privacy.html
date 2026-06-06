@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clozr — Privacy First. Always.</title>
+    <meta name="description" content="Clozr is the only meeting-to-proposal tool built for professionals who can't afford a data breach. No bots. No cloud uploads. No AI training on your data.">
+    <meta property="og:title" content="Clozr — Privacy First Meeting Tool">
+    <meta property="og:description" content="Your meetings are confidential. Your AI tool should be too. No bots. No training. No surprises.">
+    <meta property="og:type" content="website">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0D0D12;
+            --surface: #16161D;
+            --border: #2A2A3A;
+            --purple: #6C5CE7;
+            --purple-dark: #4834D4;
+            --cyan: #00D2D3;
+            --red: #FF6B6B;
+            --text: #E0E0F0;
+            --text-dim: #8B8BA0;
+            --green: #00E676;
+            --warn: #FFB347;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+        }
+        .container { max-width: 800px; margin: 0 auto; padding: 0 24px; }
+
+        /* Hero */
+        .hero {
+            padding: 80px 0 60px;
+            text-align: center;
+        }
+        .hero-badge {
+            display: inline-block;
+            padding: 6px 16px;
+            background: rgba(108,92,231,0.12);
+            border: 1px solid rgba(108,92,231,0.3);
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--purple);
+            margin-bottom: 24px;
+        }
+        .hero h1 {
+            font-size: 42px;
+            font-weight: 800;
+            line-height: 1.15;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, #fff 0%, #c8c8d8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .hero h1 .accent { color: var(--cyan); -webkit-text-fill-color: var(--cyan); }
+        .hero p {
+            font-size: 18px;
+            color: var(--text-dim);
+            max-width: 600px;
+            margin: 0 auto 32px;
+        }
+        .hero .tagline {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 36px;
+            letter-spacing: 0.5px;
+        }
+        .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+        .btn {
+            display: inline-flex; align-items: center; gap: 8px;
+            padding: 14px 28px; border-radius: 14px; font-size: 15px;
+            font-weight: 600; text-decoration: none; transition: all 0.2s;
+            cursor: pointer; border: none;
+        }
+        .btn-primary {
+            background: var(--purple); color: #fff;
+            box-shadow: 0 4px 20px rgba(108,92,231,0.35);
+        }
+        .btn-primary:hover { background: var(--purple-dark); transform: translateY(-1px); }
+        .btn-outline {
+            background: transparent; color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .btn-outline:hover { border-color: var(--purple); color: var(--purple); }
+        .quote-block {
+            margin-top: 40px; padding: 20px 24px;
+            background: var(--surface); border-radius: 12px;
+            border-left: 3px solid var(--purple);
+            font-style: italic; color: var(--text-dim); font-size: 15px;
+        }
+        .quote-block strong { font-style: normal; color: var(--text); }
+
+        /* Pillars */
+        .pillars { padding: 60px 0; }
+        .section-title {
+            font-size: 28px; font-weight: 700; margin-bottom: 40px;
+            text-align: center;
+        }
+        .pillar {
+            padding: 28px; margin-bottom: 16px;
+            background: var(--surface); border-radius: 16px;
+            border: 1px solid var(--border);
+            transition: border-color 0.2s;
+        }
+        .pillar:hover { border-color: var(--purple); }
+        .pillar-head {
+            display: flex; align-items: center; gap: 14px;
+            margin-bottom: 12px;
+        }
+        .pillar-icon {
+            width: 44px; height: 44px; border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 22px; flex-shrink: 0;
+        }
+        .pillar-icon.purple { background: rgba(108,92,231,0.12); }
+        .pillar-icon.cyan { background: rgba(0,210,211,0.12); }
+        .pillar-icon.red { background: rgba(255,107,107,0.12); }
+        .pillar-icon.green { background: rgba(0,230,118,0.12); }
+        .pillar-icon.warn { background: rgba(255,179,71,0.12); }
+        .pillar h3 { font-size: 18px; font-weight: 700; }
+        .pillar p { font-size: 15px; color: var(--text-dim); }
+
+        /* Comparison */
+        .comparison { padding: 60px 0; }
+        .table-wrap {
+            overflow-x: auto; border-radius: 16px;
+            border: 1px solid var(--border);
+        }
+        table {
+            width: 100%; border-collapse: collapse;
+            font-size: 14px;
+        }
+        th, td {
+            padding: 14px 16px; text-align: center;
+            border-bottom: 1px solid var(--border);
+        }
+        th { background: var(--surface); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
+        th:first-child, td:first-child { text-align: left; font-weight: 500; }
+        td { background: var(--bg); }
+        .clozr-col { background: rgba(108,92,231,0.06) !important; }
+        .yes { color: var(--green); font-weight: 600; }
+        .no { color: var(--red); font-weight: 600; }
+        .warn-text { color: var(--warn); font-weight: 600; }
+        .footnote {
+            margin-top: 12px; font-size: 12px; color: var(--text-dim);
+            text-align: center;
+        }
+
+        /* FAQ */
+        .faq { padding: 60px 0; }
+        .faq-item {
+            margin-bottom: 12px; border-radius: 14px;
+            border: 1px solid var(--border); overflow: hidden;
+        }
+        .faq-q {
+            padding: 18px 20px; font-weight: 600; font-size: 15px;
+            cursor: pointer; display: flex; justify-content: space-between;
+            align-items: center; background: var(--surface);
+            user-select: none;
+        }
+        .faq-q:hover { background: rgba(108,92,231,0.06); }
+        .faq-q .arrow { transition: transform 0.2s; color: var(--text-dim); }
+        .faq-q.open .arrow { transform: rotate(180deg); }
+        .faq-a {
+            padding: 0 20px; max-height: 0; overflow: hidden;
+            transition: max-height 0.3s ease, padding 0.3s ease;
+            font-size: 14px; color: var(--text-dim); line-height: 1.8;
+            background: var(--bg);
+        }
+        .faq-a.open { max-height: 500px; padding: 16px 20px 20px; }
+
+        /* CTA */
+        .closing {
+            padding: 80px 0; text-align: center;
+            border-top: 1px solid var(--border);
+        }
+        .closing h2 {
+            font-size: 32px; font-weight: 800; margin-bottom: 16px;
+            background: linear-gradient(135deg, #fff 0%, #c8c8d8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .closing p {
+            font-size: 16px; color: var(--text-dim);
+            max-width: 540px; margin: 0 auto 36px;
+        }
+        .contact-email {
+            margin-top: 24px; font-size: 13px; color: var(--text-dim);
+        }
+        .contact-email a { color: var(--purple); text-decoration: none; }
+        .contact-email a:hover { text-decoration: underline; }
+
+        @media (max-width: 640px) {
+            .hero h1 { font-size: 28px; }
+            .hero p { font-size: 15px; }
+            .section-title { font-size: 22px; }
+            table { font-size: 12px; }
+            th, td { padding: 10px 8px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- HERO -->
+<section class="hero">
+    <div class="container">
+        <div class="hero-badge">🔒 Privacy-First Architecture</div>
+        <h1>Your meetings are confidential.<br>Your AI tool should be <span class="accent">too</span>.</h1>
+        <p>Clozr is the only meeting-to-proposal tool built for professionals who can't afford a data breach, a billing nightmare, or an AI that trains on your client conversations.</p>
+        <div class="tagline">No bots. No cloud uploads. No exceptions.</div>
+        <div class="cta-row">
+            <a href="/#signup" class="btn btn-primary">Start Free Trial</a>
+            <a href="#how-it-works" class="btn btn-outline">See How It Works</a>
+        </div>
+        <div class="quote-block">
+            "Finally — a tool my compliance team actually approved."<br>
+            — <strong>Agency owner, 12-person firm</strong>
+        </div>
+    </div>
+</section>
+
+<!-- TRUST PILLARS -->
+<section class="pillars" id="how-it-works">
+    <div class="container">
+        <h2 class="section-title">5 Reasons Professionals Trust Clozr</h2>
+
+        <div class="pillar">
+            <div class="pillar-head">
+                <div class="pillar-icon purple">🔒</div>
+                <h3>We Never Train AI On Your Data</h3>
+            </div>
+            <p>Not today. Not after a terms update. Not ever. Most AI tools have a clause buried in paragraph 11 that lets them use your conversations to improve their models. Clozr doesn't. Your client's NDA, their budget, their strategic problems — none of it feeds our AI. We removed that clause entirely because it shouldn't exist in the first place.</p>
+        </div>
+
+        <div class="pillar">
+            <div class="pillar-head">
+                <div class="pillar-icon cyan">🖥️</div>
+                <h3>Self-Hosted = Your Server, Your Rules</h3>
+            </div>
+            <p>Deploy Clozr on your own infrastructure. AWS, DigitalOcean, your office server — your choice. When self-hosted, your transcripts, proposals, and recordings never touch our servers. Not during processing. Not in transit. Never. This isn't a premium add-on. It's a core feature because lawyers, healthcare consultants, and financial advisors shouldn't have to pay extra for compliance.</p>
+        </div>
+
+        <div class="pillar">
+            <div class="pillar-head">
+                <div class="pillar-icon green">👻</div>
+                <h3>No Bot Joins Your Call</h3>
+            </div>
+            <p>You know that awkward moment when "Fireflies.ai" shows up in your Zoom waiting room before your client does? That doesn't happen with Clozr. We record locally — directly on your device. No third-party bot. No notification to your client that a recording service joined. No metadata sent to our servers mid-call. Just a clean, professional meeting and a transcript waiting for you afterward.</p>
+        </div>
+
+        <div class="pillar">
+            <div class="pillar-head">
+                <div class="pillar-icon red">🚫</div>
+                <h3>No Surprise Billing. No Spam.</h3>
+            </div>
+            <p>Otter.ai notified entire organizations without permission. Fireflies users have reported being charged after cancellation. We read those Reddit threads. We built our billing to be the opposite: Cancel anytime, effective immediately. No auto-invites to your teammates. No "we emailed your whole company" features. Receipts that make sense. Your credit card shouldn't be a liability.</p>
+        </div>
+
+        <div class="pillar">
+            <div class="pillar-head">
+                <div class="pillar-icon warn">⚖️</div>
+                <h3>Built for Regulated Industries</h3>
+            </div>
+            <p>HIPAA-conscious. Attorney-client privilege aware. Financial confidentiality respected. We won't claim blanket HIPAA certification because that's not how it works — and anyone who does is lying to you. What we will say: Clozr was designed with regulated professionals in mind. Self-hosting, local recording, and zero data training are features specifically because of your compliance obligations — not despite them.</p>
+        </div>
+    </div>
+</section>
+
+<!-- COMPARISON TABLE -->
+<section class="comparison">
+    <div class="container">
+        <h2 class="section-title">The Honest Comparison</h2>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="text-align:left">Feature</th>
+                        <th class="clozr-col">Clozr</th>
+                        <th>Granola</th>
+                        <th>Otter</th>
+                        <th>Fireflies</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Trains AI on your data?</td>
+                        <td class="clozr-col"><span class="no">❌ Never</span></td>
+                        <td><span class="warn-text">✅ Default</span></td>
+                        <td><span class="warn-text">⚠️ Opt-out</span></td>
+                        <td><span class="warn-text">⚠️ Opt-out</span></td>
+                    </tr>
+                    <tr>
+                        <td>Bot joins your call?</td>
+                        <td class="clozr-col"><span class="no">❌ Never</span></td>
+                        <td><span class="no">❌ No</span></td>
+                        <td><span class="yes">✅ Yes</span></td>
+                        <td><span class="yes">✅ Yes</span></td>
+                    </tr>
+                    <tr>
+                        <td>Self-hosted option?</td>
+                        <td class="clozr-col"><span class="yes">✅ Yes</span></td>
+                        <td><span class="no">❌ No</span></td>
+                        <td><span class="no">❌ No</span></td>
+                        <td><span class="no">❌ No</span></td>
+                    </tr>
+                    <tr>
+                        <td>Local recording (no upload)?</td>
+                        <td class="clozr-col"><span class="yes">✅ Yes</span></td>
+                        <td><span class="yes">✅ Yes</span></td>
+                        <td><span class="no">❌ No</span></td>
+                        <td><span class="no">❌ No</span></td>
+                    </tr>
+                    <tr>
+                        <td>Proposal generation?</td>
+                        <td class="clozr-col"><span class="yes">✅ Yes</span></td>
+                        <td><span class="no">❌ No</span></td>
+                        <td><span class="no">❌ No</span></td>
+                        <td><span class="no">❌ No</span></td>
+                    </tr>
+                    <tr>
+                        <td>Speaker diarization?</td>
+                        <td class="clozr-col"><span class="yes">✅ Yes</span></td>
+                        <td><span class="no">❌ No</span></td>
+                        <td><span class="warn-text">⚠️ Unreliable</span></td>
+                        <td><span class="yes">✅ Yes</span></td>
+                    </tr>
+                    <tr>
+                        <td>Android app?</td>
+                        <td class="clozr-col"><span class="yes">✅ Yes</span></td>
+                        <td><span class="warn-text">❌ Waitlist</span></td>
+                        <td><span class="yes">✅ Yes</span></td>
+                        <td><span class="yes">✅ Yes</span></td>
+                    </tr>
+                    <tr>
+                        <td>Auto-invites teammates?</td>
+                        <td class="clozr-col"><span class="no">❌ Never</span></td>
+                        <td><span class="no">❌ No</span></td>
+                        <td><span class="warn-text">⚠️ Reported</span></td>
+                        <td><span class="warn-text">⚠️ Default</span></td>
+                    </tr>
+                    <tr>
+                        <td>Billing complaints?</td>
+                        <td class="clozr-col">—</td>
+                        <td>—</td>
+                        <td><span class="warn-text">⚠️ Notable</span></td>
+                        <td><span class="warn-text">⚠️ Notable</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="footnote">⚠️ = documented user complaints or default-on behavior requiring active opt-out. Sources available on request. Last verified: June 2026.</p>
+    </div>
+</section>
+
+<!-- FAQ -->
+<section class="faq">
+    <div class="container">
+        <h2 class="section-title">Questions We Get From Compliance-Conscious Buyers</h2>
+
+        <div class="faq-item">
+            <div class="faq-q" onclick="toggleFaq(this)">
+                Can Clozr actually see my transcripts if I self-host?
+                <span class="arrow">▼</span>
+            </div>
+            <div class="faq-a">
+                No. When you self-host, transcript processing happens on your server using your own API keys (OpenAI, Anthropic, or local models like Ollama). We have no access to the content. Zero. If you use our cloud version, transcripts are processed and then deleted per our retention policy — they are never stored permanently or used for training.
+            </div>
+        </div>
+
+        <div class="faq-item">
+            <div class="faq-q" onclick="toggleFaq(this)">
+                What AI model processes my transcripts?
+                <span class="arrow">▼</span>
+            </div>
+            <div class="faq-a">
+                Your choice. Self-hosted users can connect their own OpenAI key, use Anthropic Claude, or run a fully local model with no internet connection required. Cloud users use our API pipeline with dedicated (not shared) processing and immediate deletion post-generation.
+            </div>
+        </div>
+
+        <div class="faq-item">
+            <div class="faq-q" onclick="toggleFaq(this)">
+                Is Clozr HIPAA compliant?
+                <span class="arrow">▼</span>
+            </div>
+            <div class="faq-a">
+                We are HIPAA-conscious by design, not HIPAA-certified as a blanket claim. For healthcare consultants, self-hosting is the correct configuration — your data never leaves your environment. We recommend pairing Clozr with a BAA from your cloud provider (AWS, Azure, GCP all offer these). We're happy to walk through your specific setup with your compliance team.
+            </div>
+        </div>
+
+        <div class="faq-item">
+            <div class="faq-q" onclick="toggleFaq(this)">
+                What happens to my data if I cancel?
+                <span class="arrow">▼</span>
+            </div>
+            <div class="faq-a">
+                Cloud plan: all data deleted within 30 days of cancellation. You can request immediate deletion. Self-hosted: you own the server, you delete it yourself — we have nothing to delete.
+            </div>
+        </div>
+
+        <div class="faq-item">
+            <div class="faq-q" onclick="toggleFaq(this)">
+                Does Clozr notify other meeting participants that I'm recording?
+                <span class="arrow">▼</span>
+            </div>
+            <div class="faq-a">
+                Clozr doesn't — but you are legally responsible for compliance with recording consent laws in your jurisdiction (many states and countries require it). We include a consent reminder in the app before recording starts. We also provide a sample disclosure script in our Legal Resources section. This isn't us dodging responsibility — it's us being honest that this is your professional obligation and we want to help you meet it.
+            </div>
+        </div>
+
+        <div class="faq-item">
+            <div class="faq-q" onclick="toggleFaq(this)">
+                Can my whole team use it without everyone getting auto-enrolled in email lists?
+                <span class="arrow">▼</span>
+            </div>
+            <div class="faq-a">
+                Yes. Team accounts work exactly as you'd expect: you invite who you invite. Nobody gets a surprise email from Clozr. Nobody's contact is harvested. We don't market to your team members unless they individually opt in.
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- CLOSING CTA -->
+<section class="closing">
+    <div class="container">
+        <h2>Privacy isn't a feature we added.<br>It's the reason Clozr exists.</h2>
+        <p>Every tool in this space made the same tradeoffs: your data for their model training, your clients' conversations for their product roadmap. We made a different bet — that enough professionals take confidentiality seriously that a tool built around that principle could survive as a business.</p>
+        <div class="cta-row">
+            <a href="/#signup" class="btn btn-primary">Start Your Free Trial — No Bot. No Training. No Surprises.</a>
+        </div>
+        <div class="contact-email">
+            Questions about our security architecture? Email <a href="mailto:privacy@clozr.com">privacy@clozr.com</a> — a founder will reply.
+        </div>
+    </div>
+</section>
+
+<script>
+function toggleFaq(el) {
+    const answer = el.nextElementSibling;
+    const isOpen = el.classList.contains('open');
+    // Close all
+    document.querySelectorAll('.faq-q').forEach(q => q.classList.remove('open'));
+    document.querySelectorAll('.faq-a').forEach(a => a.classList.remove('open'));
+    // Toggle clicked
+    if (!isOpen) {
+        el.classList.add('open');
+        answer.classList.add('open');
+    }
+}
+</script>
+
+</body>
+</html>

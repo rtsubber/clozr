@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="The Clozr — AI Meeting Assistant that closes deals, not just notes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Clozr">
+  <meta name="theme-color" content="#0D0D12">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="icon" type="image/png" href="favicon.png"/>
+  <title>The Clozr</title>
+  <link rel="manifest" href="manifest.json">
+  <script>
+    // Global error handler - shows errors instead of stuck spinner
+    window.addEventListener('error', function(e) {
+      console.error('Clozr JS Error:', e.message, e.filename, 'line:', e.lineno);
+      var el = document.getElementById('loading');
+      if (el) el.innerHTML = '<div style="text-align:center;padding:40px;color:#FF6B6B;font-family:system-ui"><h3>Failed to load Clozr</h3><p style="color:#8B8BA0;font-size:14px">' + (e.message || 'Unknown error') + '</p><p style="color:#8B8BA0;font-size:12px">Open browser console (F12) for details</p></div>';
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      console.error('Clozr Promise Error:', e.reason);
+      var el = document.getElementById('loading');
+      if (el) el.innerHTML = '<div style="text-align:center;padding:40px;color:#FF6B6B;font-family:system-ui"><h3>Failed to load Clozr</h3><p style="color:#8B8BA0;font-size:12px">' + (e.reason || 'Promise rejected') + '</p></div>';
+    });
+  </script>
+  <style>
+    body { background-color: #0D0D12; margin: 0; }
+    #loading { position: fixed; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; background: #0D0D12; z-index: 9999; }
+    #loading .spinner { width: 40px; height: 40px; border: 3px solid #2A2A3A; border-top-color: #6C5CE7; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="loading"><div class="spinner"></div></div>
+  <script src="flutter_bootstrap.js" async></script>
+  
+  <!-- Browser Speech Recognition Bridge -->
+  <script>
+    // ── Callbacks set by Flutter via jarvisSpeech.setCallback(name, fn) ──
+    var jarvisSTT = {
+      _onFinalResult: null,
+      _onInterimResult: null,
+      _onSTTError: null
+    };
+
+    var jarvisSpeech = {
+      recognition: null,
+      isListening: false,
+      
+      start: function() {
+        var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          console.warn('[Jarvis] Speech recognition not supported in this browser');
+          if (jarvisSTT._onSTTError) {
+            jarvisSTT._onSTTError('Speech recognition not supported. Try Safari or Chrome.');
+          }
+          return;
+        }
+        
+        var recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+        recognition.maxAlternatives = 1;
+        
+        var self = this;
+        
+        recognition.onresult = function(event) {
+          var interimTranscript = '';
+          var finalTranscript = '';
+          for (var i = event.resultIndex; i < event.results.length; i++) {
+            var transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              finalTranscript += transcript + ' ';
+            } else {
+              interimTranscript += transcript;
+            }
+          }
+          // Send final results back to Flutter
+          if (finalTranscript.trim() && jarvisSTT._onFinalResult) {
+            console.log('[Jarvis] Final:', finalTranscript.trim());
+            jarvisSTT._onFinalResult(finalTranscript.trim());
+          }
+          // Send interim results back to Flutter
+          if (interimTranscript && jarvisSTT._onInterimResult) {
+            jarvisSTT._onInterimResult(interimTranscript);
+          }
+        };
+        
+        recognition.onerror = function(event) {
+          console.error('[Jarvis] Speech error:', event.error);
+          if (event.error === 'not-allowed' && jarvisSTT._onSTTError) {
+            jarvisSTT._onSTTError('Microphone permission denied. Please allow in browser settings.');
+          }
+          // Auto-restart on recoverable errors
+          if (self.isListening && (event.error === 'network' || event.error === 'aborted' || event.error === 'no-speech')) {
+            setTimeout(function() { 
+              try { recognition.start(); } catch(e) { console.log('[Jarvis] Restart failed:', e); }
+            }, 500);
+          }
+        };
+        
+        recognition.onend = function() {
+          if (self.isListening) {
+            // Auto-restart if still supposed to be listening
+            setTimeout(function() {
+              try { recognition.start(); } catch(e) {}
+            }, 100);
+          }
+        };
+        
+        this.recognition = recognition;
+        
+        try {
+          recognition.start();
+          this.isListening = true;
+          console.log('[Jarvis] Speech recognition started');
+        } catch(e) {
+          console.error('[Jarvis] Failed to start:', e);
+          if (jarvisSTT._onSTTError) {
+            jarvisSTT._onSTTError('Failed to start: ' + e.message);
+          }
+        }
+      },
+      
+      stop: function() {
+        this.isListening = false;
+        if (this.recognition) {
+          try { this.recognition.stop(); } catch(e) {}
+          this.recognition = null;
+        }
+        console.log('[Jarvis] Speech recognition stopped');
+      },
+      
+      // Called by Flutter to register callbacks
+      setCallback: function(name, callback) {
+        if (name === 'onFinalResult') jarvisSTT._onFinalResult = callback;
+        else if (name === 'onInterimResult') jarvisSTT._onInterimResult = callback;
+        else if (name === 'onSTTError') jarvisSTT._onSTTError = callback;
+        console.log('[Jarvis] Callback registered:', name);
+      }
+    };
+    
+    // Remove loading spinner when Flutter is ready
+    window.addEventListener('flutter-first-frame', function() {
+      var loader = document.getElementById('loading');
+      if (loader) loader.style.display = 'none';
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+name: jarvis_meeting_app
+description: AI meeting assistant - listens, transcribes, detects workflows, generates proposals
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.8.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # Audio
+  record: ^7.0.0              # Microphone recording
+  flutter_sound: ^9.28.0      # Audio processing
+  audio_session: ^0.1.25      # Audio session management
+  
+  # Speech-to-Text
+  speech_to_text: ^7.0.0      # Platform STT (fallback)
+  
+  # HTTP & API
+  http: ^1.4.0                # HTTP client
+  web_socket_channel: ^3.0.2  # WebSocket for streaming STT
+  dio: ^5.8.0                 # Advanced HTTP client
+  web: ^1.1.0                 # Web APIs (JS interop)
+  audioplayers: ^6.1.0         # Cross-platform audio playback
+  
+  # Storage
+  shared_preferences: ^2.5.3  # Key-value storage
+  path_provider: ^2.1.5       # File paths
+  sqflite: ^2.4.1             # Local SQLite database
+  
+  # Calendar
+  googleapis: ^14.0.0         # Google APIs
+  # google_sign_in: handled separately
+  
+  # UI
+  flutter_riverpod: ^2.6.1    # State management
+  go_router: ^15.1.2          # Navigation
+  intl: ^0.20.2               # Date formatting
+  markdown_widget: ^2.0.5      # Markdown rendering
+  
+  # Utils
+  uuid: ^4.5.1                # Unique IDs
+  json_annotation: ^4.9.0     # JSON serialization
+  permission_handler: ^11.4.0  # Permissions
+  flutter_dotenv: ^5.2.1      # Environment variables
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  build_runner: ^2.4.14
+  json_serializable: ^6.9.4
+
+flutter:
+  uses-material-design: true
+  assets:
+    - .env
+    - assets/
+    - assets/icons/

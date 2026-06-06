@@ -1,0 +1,35 @@
+{
+    "name": "The Clozr",
+    "short_name": "Clozr",
+    "start_url": "/clozr/",
+    "display": "standalone",
+    "background_color": "#0D0D12",
+    "theme_color": "#6C5CE7",
+    "description": "AI meeting assistant that closes deals, not just notes",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

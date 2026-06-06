@@ -1,0 +1,60 @@
+# Secrets and environment files
+.env
+.clozr_env
+*.env
+*.key
+*.secret
+secrets.json
+.clozr_env
+
+# API keys and tokens - NEVER commit these
+*.stripe_key
+*.anthropic_key
+*.groq_key
+*.fal_key
+.twitter_keys
+
+# Build outputs (contains Flutter compiled code, too large for repo)
+build/
+
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.lock
+!pubspec.lock
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data (SQLite databases with user data)
+data/
+*.db
+*.sqlite3
+
+# Proposals (user-generated content)
+proposals/
+
+# APK/IPA (binary artifacts)
+*.apk
+*.aab
+*.ipa
+
+# Logs
+*.log
+
+# Service files with passwords
+*.service
