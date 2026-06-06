@@ -13,7 +13,13 @@ def seed():
     
     # Create default account
     email = os.environ.get("CLOZR_ADMIN_EMAIL", "ron@brandbooststudio.co")
-    password = os.environ.get("CLOZR_ADMIN_PASSWORD", "changeme123")
+    password = os.environ.get("CLOZR_ADMIN_PASSWORD")
+    if not password:
+        import secrets
+        password = secrets.token_urlsafe(16)
+        print(f"⚠️  No CLOZR_ADMIN_PASSWORD set. Generated random password.")
+        print(f"⚠️  Save this password — it won't be shown again:")
+        print(f"    {password}")
     
     existing = db.query(Account).filter(Account.email == email).first()
     if existing:

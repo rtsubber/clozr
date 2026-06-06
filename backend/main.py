@@ -357,17 +357,34 @@ def get_db():
         db.close()
 
 
-# ── Rate Limiting (simple in-memory) ──
+# ── Rate Limiting (bounded, with periodic cleanup) ──
 
-_rate_limits: dict[str, list] = {}
+_rate_limits: dict[str, list[float]] = {}
+_rate_limits_last_cleanup: float = 0  # timestamp of last full cleanup
+RATE_LIMIT_MAX_KEYS = 10000  # evict oldest IPs when dict grows beyond this
 
 def rate_limit(request: Request, max_requests: int = 60, window_seconds: int = 60):
-    """Simple per-IP rate limiting"""
+    """Per-IP rate limiting with bounded memory."""
+    global _rate_limits_last_cleanup
     key = request.client.host if request.client else "unknown"
     now = time.time()
+
+    # Periodic full cleanup: evict stale keys and cap dict size
+    if now - _rate_limits_last_cleanup > 300:  # every 5 minutes
+        _rate_limits_last_cleanup = now
+        # Remove stale entries
+        stale = [k for k, v in _rate_limits.items() if not v or now - v[-1] > window_seconds]
+        for k in stale:
+            del _rate_limits[k]
+        # If still too large, evict oldest entries
+        if len(_rate_limits) > RATE_LIMIT_MAX_KEYS:
+            sorted_keys = sorted(_rate_limits.keys(), key=lambda k: _rate_limits[k][-1] if _rate_limits[k] else 0)
+            for k in sorted_keys[: len(_rate_limits) - RATE_LIMIT_MAX_KEYS]:
+                del _rate_limits[k]
+
     if key not in _rate_limits:
         _rate_limits[key] = []
-    # Clean old entries
+    # Clean old entries for this IP
     _rate_limits[key] = [t for t in _rate_limits[key] if now - t < window_seconds]
     if len(_rate_limits[key]) >= max_requests:
         raise HTTPException(429, "Rate limit exceeded")
