@@ -99,12 +99,12 @@ TIERS = {
 
 class CheckoutRequest(BaseModel):
     price_key: str
-    account_id: str
     email: Optional[str] = None
+    # account_id removed — now comes from JWT auth (CRITICAL-NEW-3)
 
 
 class PortalRequest(BaseModel):
-    account_id: str
+    pass  # account_id comes from JWT auth now
 
 
 @router.get("/tiers")
@@ -117,7 +117,10 @@ async def get_tiers():
 
 
 @router.post("/checkout")
-async def create_checkout_session(req: CheckoutRequest):
+async def create_checkout_session(
+    req: CheckoutRequest,
+    account_id: str = Depends(verify_token),  # CRITICAL-NEW-3: Auth required
+):
     """Create a Stripe Checkout session for subscription signup."""
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe not configured")
@@ -136,16 +139,16 @@ async def create_checkout_session(req: CheckoutRequest):
             }],
             success_url=f"{APP_URL}/pricing?success=true&session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"{APP_URL}/pricing?canceled=true",
-            client_reference_id=req.account_id,
+            client_reference_id=account_id,  # From JWT, not request body
             customer_email=req.email,
             metadata={
-                "account_id": req.account_id,
+                "account_id": account_id,  # From JWT, not request body
                 "tier": req.price_key.split("_")[0],
             },
             allow_promotion_codes=True,
             subscription_data={
                 "metadata": {
-                    "account_id": req.account_id,
+                    "account_id": account_id,
                 },
             },
         )
@@ -155,7 +158,10 @@ async def create_checkout_session(req: CheckoutRequest):
 
 
 @router.post("/portal")
-async def create_portal_session(req: PortalRequest):
+async def create_portal_session(
+    req: PortalRequest,
+    account_id: str = Depends(verify_token),  # CRITICAL-NEW-3: Auth required
+):
     """Create a Stripe Customer Portal session for subscription management."""
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe not configured")
@@ -164,7 +170,7 @@ async def create_portal_session(req: PortalRequest):
     from main import SessionLocal, Account
     db = SessionLocal()
     try:
-        account = db.query(Account).filter(Account.id == req.account_id).first()
+        account = db.query(Account).filter(Account.id == account_id).first()  # JWT-verified
         if not account or not account.stripe_customer_id:
             raise HTTPException(status_code=404, detail="No Stripe customer found for this account")
 
@@ -182,7 +188,7 @@ async def create_portal_session(req: PortalRequest):
 
 @router.post("/webhook")
 async def stripe_webhook(request: Request):
-    """Handle Stripe webhook events."""
+    """Handle Stripe webhook events with idempotency (CRITICAL-NEW-2)."""
     if not STRIPE_WEBHOOK_SECRET:
         raise HTTPException(status_code=500, detail="Webhook secret not configured")
 
@@ -196,13 +202,26 @@ async def stripe_webhook(request: Request):
     except stripe.error.SignatureVerificationError:
         raise HTTPException(status_code=400, detail="Invalid signature")
 
+    # CRITICAL-NEW-2: Idempotency check — skip already-processed events
+    from main import SessionLocal, Account, WebhookEvent
+    db = SessionLocal()
+    try:
+        event_id = event["id"]
+        existing = db.query(WebhookEvent).filter(WebhookEvent.id == event_id).first()
+        if existing:
+            logging.info(f"Skipping duplicate webhook event: {event_id}")
+            return {"received": True, "duplicate": True}
+        db.add(WebhookEvent(id=event_id))
+        db.commit()
+    except Exception:
+        db.rollback()
+        # If we can't check idempotency, continue processing (fail open)
+        pass
+
     # Handle events
     event_type = event["type"]
     data = event["data"]["object"]
 
-    # Use SQLAlchemy instead of raw sqlite3
-    from main import SessionLocal, Account
-    db = SessionLocal()
     try:
         if event_type == "checkout.session.completed":
             account_id = data.get("client_reference_id") or data.get("metadata", {}).get("account_id")
@@ -268,9 +287,11 @@ async def stripe_webhook(request: Request):
     return {"received": True}
 
 
-@router.get("/subscription/{account_id}")
-async def get_subscription(account_id: str):
-    """Get the current subscription status for an account."""
+@router.get("/subscription")
+async def get_subscription(
+    account_id: str = Depends(verify_token),  # CRITICAL-NEW-3: Auth required
+):
+    """Get the current subscription status for the authenticated account."""
     from main import SessionLocal, Account
     db = SessionLocal()
     try:
@@ -282,12 +303,11 @@ async def get_subscription(account_id: str):
 
         return {
             "account_id": account_id,
-            "tier": account.tier,
+            "tier": account.tier or "free",
             "tier_name": tier_info["name"],
             "status": account.subscription_status or "active",
             "features": tier_info,
-            "stripe_customer_id": account.stripe_customer_id,
-            "stripe_subscription_id": account.stripe_subscription_id,
+            # Don't expose Stripe IDs to frontend (security)
         }
     finally:
         db.close()

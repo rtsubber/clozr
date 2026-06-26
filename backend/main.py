@@ -136,6 +136,12 @@ class Account(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     is_active = Column(Boolean, default=True)
     # Brand identity (A4 — per-tenant branding)
+    # Stripe subscription fields (CRITICAL-NEW-1 fix)
+    tier = Column(String(20), default="free", index=True)
+    stripe_customer_id = Column(String(100), nullable=True, index=True)
+    stripe_subscription_id = Column(String(100), nullable=True)
+    subscription_status = Column(String(50), default="active")
+    # Brand identity (A4 — per-tenant branding)
     brand_name = Column(String(100), default="The Clozr")
     brand_color = Column(String(7), default="#6C5CE7")
     accent_color = Column(String(7), default="#00D2D3")
@@ -186,6 +192,13 @@ class ProposalView(Base):
     # Minimal tracking — no IP/UA by default (privacy, M4 fix)
     device_type = Column(String(50), default="")  # "desktop"/"mobile" only
     referrer_domain = Column(String(200), default="")
+
+
+class WebhookEvent(Base):
+    """Stripe webhook idempotency — prevents duplicate processing (CRITICAL-NEW-2)"""
+    __tablename__ = "webhook_events"
+    id = Column(String(100), primary_key=True)  # Stripe event.id
+    processed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class ServiceCatalogItem(Base):
@@ -253,7 +266,7 @@ class ProposalViewTrack(BaseModel):
 
 
 class AccountCreate(BaseModel):
-    email: str = Field(..., max_length=255)
+    email: str = Field(..., max_length=255)  # Validated with email check in endpoint
     password: str = Field(..., min_length=8, max_length=128)
     name: str = Field("", max_length=100)
     company: str = Field("", max_length=100)
@@ -285,14 +298,14 @@ class MeetingCreate(BaseModel):
     def validate_audio_filename(cls, v):
         if v is None:
             return v
-        # Only allow safe filenames — no path traversal
+        # Only allow safe filenames — no path traversal (Bug B2: raise instead of silent None)
         v = os.path.basename(v)
         if '..' in v or '/' in v or '\\' in v:
-            return None
+            raise ValueError("Invalid audio filename: path separators not allowed")
         # Only allow audio extensions
         ext = v.rsplit('.', 1)[-1].lower() if '.' in v else ''
         if ext not in {'mp3', 'mp4', 'wav', 'webm', 'ogg', 'm4a', 'mpeg', 'mpga'}:
-            return None
+            raise ValueError(f"Invalid audio file extension: .{ext}")
         return v
 
 
@@ -328,9 +341,13 @@ def verify_password(password: str, stored_hash: str) -> bool:
     try:
         salt, hashed = stored_hash.split(":", 1)
         check = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
-        return check == hashed
+        if check == hashed:
+            # MEDIUM-NEW-1: Signal that this hash needs upgrade
+            # The login endpoint will handle the re-hash
+            return True
     except (ValueError, AttributeError):
-        return False
+        pass
+    return False
 
 def create_access_token(data: dict, expires_hours: int = 24) -> str:
     to_encode = data.copy()
@@ -339,16 +356,21 @@ def create_access_token(data: dict, expires_hours: int = 24) -> str:
     return jwt.encode(to_encode, JWT_SECRET, algorithm="HS256")
 
 
-def verify_token(request: Request) -> str:
-    """Extract and verify account_id from JWT. Returns account_id or raises 401."""
+def verify_token(request: Request, db: Session = Depends(get_db)) -> str:
+    """Extract and verify account_id from JWT. Returns account_id or raises 401.
+    MEDIUM-NEW-3: Also checks that account is_active."""
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(401, "Missing or invalid authorization header")
     try:
-        payload = jwt.decode(auth[7:], JWT_SECRET, algorithms=["HS256"])
+        payload = jwt.decode(auth[7:], JWT_SECRET, algorithms=["HS256"], options={"verify_exp": True})
         account_id = payload.get("sub")
         if not account_id:
             raise HTTPException(401, "Invalid token")
+        # Check account exists and is active (MEDIUM-NEW-3)
+        account = db.query(Account).filter(Account.id == account_id, Account.is_active == True).first()
+        if not account:
+            raise HTTPException(401, "Account disabled or not found")
         return account_id
     except JWTError:
         raise HTTPException(401, "Token expired or invalid")
@@ -712,7 +734,11 @@ async def health():
 @app.post("/api/auth/register")
 async def register(data: AccountCreate, request: Request, db: Session = Depends(get_db)):
     rate_limit(request, max_requests=5, window_seconds=300)  # 5 per 5 min
-    existing = db.query(Account).filter(Account.email == data.email).first()
+    # HIGH-NEW-4: Email validation
+    email_pattern = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+    if not email_pattern.match(data.email):
+        raise HTTPException(400, "Invalid email address format")
+    existing = db.query(Account).filter(Account.email == data.email.lower()).first()
     if existing:
         raise HTTPException(409, "Email already registered")
     account = Account(
@@ -735,6 +761,11 @@ async def login(data: LoginRequest, request: Request, db: Session = Depends(get_
     account = db.query(Account).filter(Account.email == data.email).first()
     if not account or not verify_password(data.password, account.password_hash):
         raise HTTPException(401, "Invalid credentials")
+    # MEDIUM-NEW-1: Auto-upgrade legacy SHA-256 passwords to bcrypt on successful login
+    if not account.password_hash.startswith("$2"):
+        account.password_hash = hash_password(data.password)
+        db.commit()
+        logging.info(f"Upgraded password hash for account {account.id}")
     token = create_access_token({"sub": account.id})
     return {"token": token, "account_id": account.id, "brand_name": account.brand_name}
 
@@ -1452,6 +1483,9 @@ async def get_meeting_audio(
         raise HTTPException(404, "No audio recording for this meeting")
 
     audio_path = Path(meeting.audio_path)
+    # MEDIUM-NEW-5: Validate audio file is under AUDIO_DIR (defense in depth)
+    if not str(audio_path.resolve()).startswith(str(AUDIO_DIR.resolve()) + os.sep):
+        raise HTTPException(403, "Invalid audio path")
     # Determine content type from extension
     content_types = {
         ".webm": "audio/webm", ".mp3": "audio/mpeg", ".wav": "audio/wav",
@@ -1474,6 +1508,15 @@ async def delete_meeting(
     ).first()
     if not meeting:
         raise HTTPException(404, "Meeting not found")
+    # MEDIUM-NEW-4: Delete audio file when meeting is deleted (GDPR compliance)
+    if meeting.audio_path:
+        try:
+            audio_file = Path(meeting.audio_path)
+            if audio_file.exists() and str(audio_file.resolve()).startswith(str(AUDIO_DIR.resolve())):
+                audio_file.unlink()
+                logging.info(f"Deleted audio file: {meeting.audio_path}")
+        except OSError as e:
+            logging.warning(f"Failed to delete audio file {meeting.audio_path}: {e}")
     db.delete(meeting)
     db.commit()
     return {"ok": True}
@@ -1532,9 +1575,12 @@ async def create_proposal(
 @app.get("/api/proposals/{proposal_id}")
 async def get_proposal(
     proposal_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Public endpoint — proposals are viewable by anyone with the link"""
+    # HIGH-NEW-3: Rate limit public proposal endpoints
+    rate_limit(request, max_requests=30, window_seconds=60)
     if not VALID_ID.match(proposal_id):
         raise HTTPException(400, "Invalid proposal ID")
     proposal = db.query(Proposal).filter(Proposal.id == proposal_id).first()
@@ -1625,9 +1671,12 @@ async def delete_proposal(
 async def track_view(
     proposal_id: str,
     data: ProposalViewTrack,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Track proposal view — minimal data only (M4 fix, privacy)"""
+    # HIGH-NEW-3: Rate limit view tracking
+    rate_limit(request, max_requests=10, window_seconds=60)
     if not VALID_ID.match(proposal_id):
         raise HTTPException(400, "Invalid proposal ID")
     proposal = db.query(Proposal).filter(Proposal.id == proposal_id).first()
@@ -1686,20 +1735,30 @@ async def list_catalog(
 
 @app.post("/api/catalog")
 async def add_catalog_item(
-    data: dict,
+    data: dict,  # Accepted as dict for backward compat, validated below
     account_id: str = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
+    # HIGH-NEW-6: Validate and bound all fields
+    name = str(data.get("name", ""))[:200]
+    if not name.strip():
+        raise HTTPException(400, "Catalog item name is required")
+    category = str(data.get("category", "General"))[:100]
+    description = str(data.get("description", ""))[:2000]
+    automation = str(data.get("automation", ""))[:2000]
+    time_saved = str(data.get("time_saved", ""))[:50]
+    monthly_cost = str(data.get("monthly_cost", ""))[:50]
+    icon = str(data.get("icon", "auto_awesome"))[:50]
     item = ServiceCatalogItem(
-        id=data.get("id", uuid.uuid4().hex[:8]),
+        id=uuid.uuid4().hex[:16],  # Server-generated (fix HIGH-NEW-6)
         account_id=account_id,
-        name=data.get("name", ""),
-        category=data.get("category", "General"),
-        description=data.get("description", ""),
-        automation=data.get("automation", ""),
-        time_saved=data.get("time_saved", ""),
-        monthly_cost=data.get("monthly_cost", ""),
-        icon=data.get("icon", "auto_awesome"),
+        name=name,
+        category=category,
+        description=description,
+        automation=automation,
+        time_saved=time_saved,
+        monthly_cost=monthly_cost,
+        icon=icon,
     )
     db.add(item)
     db.commit()
@@ -1900,6 +1959,16 @@ async def import_catalog_from_pdf(
         raise HTTPException(400, "File does not appear to be a valid PDF. Please upload a real PDF file.")
     if filename.endswith(".docx") and content[:4] != b"PK\x03\x04":
         raise HTTPException(400, "File does not appear to be a valid DOCX. Please upload a real Word document.")
+    # MEDIUM-NEW-7: Zip bomb / XML bomb protection for DOCX files
+    if filename.endswith((".docx", ".doc")):
+        import zipfile as _zipfile
+        try:
+            with _zipfile.ZipFile(io.BytesIO(content)) as zf:
+                total_uncompressed = sum(info.file_size for info in zf.infolist())
+                if total_uncompressed > 50 * 1024 * 1024:  # 50MB decompressed cap
+                    raise HTTPException(400, "File too large after decompression (max 50MB). Possible zip bomb.")
+        except _zipfile.BadZipFile:
+            raise HTTPException(400, "Invalid DOCX file.")
     
     # Extract text from PDF/DOCX
     filename = (pdf_file.filename or "document.pdf").lower()
@@ -2064,9 +2133,27 @@ async def get_account(
     }
 
 
+# HIGH-NEW-5: Pydantic model for account updates (prevents stored XSS via brand_color)
+COLOR_PATTERN = re.compile(r'^#[0-9a-fA-F]{6}$')
+
+
+class AccountUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=100)
+    company: Optional[str] = Field(None, max_length=100)
+    brand_name: Optional[str] = Field(None, max_length=100)
+    brand_color: Optional[str] = Field(None, max_length=7)
+    accent_color: Optional[str] = Field(None, max_length=7)
+
+    @validator("brand_color", "accent_color")
+    def validate_color(cls, v):
+        if v is not None and not COLOR_PATTERN.match(v):
+            raise ValueError(f"Invalid color format: {v}. Must be #RRGGBB hex.")
+        return v
+
+
 @app.put("/api/account")
 async def update_account(
-    data: dict,
+    data: AccountUpdate,
     account_id: str = Depends(verify_token),
     db: Session = Depends(get_db),
 ):
@@ -2074,9 +2161,10 @@ async def update_account(
     if not account:
         raise HTTPException(404, "Account not found")
     # Whitelisted fields only
+    update_data = data.dict(exclude_none=True)
     for field in ["name", "company", "brand_name", "brand_color", "accent_color"]:
-        if field in data:
-            setattr(account, field, data[field])
+        if field in update_data:
+            setattr(account, field, update_data[field])
     db.commit()
     return {"ok": True}
 
@@ -2128,11 +2216,49 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     duration = time.time() - start
     # Don't log auth tokens or request bodies
-    logging.info(f"{request.method} {request.url.path} {response.status_code} {duration:.3f}s")
+    # MEDIUM-NEW-2: Sanitize IDs from log paths
+    safe_path = re.sub(r'/api/proposals/[a-f0-9]{8,16}', '/api/proposals/:id', request.url.path)
+    safe_path = re.sub(r'/api/meetings/[a-f0-9\-]{8,36}', '/api/meetings/:id', safe_path)
+    safe_path = re.sub(r'/api/catalog/[a-f0-9]{8,16}', '/api/catalog/:id', safe_path)
+    logging.info(f"{request.method} {safe_path} {response.status_code} {duration:.3f}s")
     return response
 
 
 # ── Run ──
+
+# ── Auto-migrate: add Stripe columns if missing ──
+def _auto_migrate():
+    """Add new columns to existing databases without losing data."""
+    import sqlite3
+    conn = sqlite3.connect(str(DB_PATH))
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(accounts)")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+    new_columns = {
+        "tier": "VARCHAR(20) DEFAULT 'free'",
+        "stripe_customer_id": "VARCHAR(100)",
+        "stripe_subscription_id": "VARCHAR(100)",
+        "subscription_status": "VARCHAR(50) DEFAULT 'active'",
+    }
+    for col, col_type in new_columns.items():
+        if col not in existing_cols:
+            logging.info(f"Auto-migrating: adding column accounts.{col}")
+            cursor.execute(f"ALTER TABLE accounts ADD COLUMN {col} {col_type}")
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='webhook_events'")
+    if not cursor.fetchone():
+        logging.info("Auto-migrating: creating webhook_events table")
+        cursor.execute("""
+            CREATE TABLE webhook_events (
+                id VARCHAR(100) PRIMARY KEY,
+                processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    conn.commit()
+    conn.close()
+    logging.info("Auto-migration complete")
+
+
+_auto_migrate()
 
 if __name__ == "__main__":
     import uvicorn
