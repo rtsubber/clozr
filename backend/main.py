@@ -13,6 +13,7 @@ import json
 import time
 import logging
 import ipaddress
+import auth as _auth_mod
 import socket
 from urllib.parse import urlparse
 from datetime import datetime, timezone
@@ -243,8 +244,35 @@ class ServiceCatalogItem(Base):
     sort_order = Column(Integer, default=0)
 
 
+class PasswordResetToken(Base):
+    """Password reset tokens — SHA-256 hashed, 1-hour expiry, single-use"""
+    __tablename__ = "password_reset_tokens"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(String(36), ForeignKey("accounts.id"), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, index=True)  # SHA-256 hash
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class EmailVerificationToken(Base):
+    """Email verification tokens"""
+    __tablename__ = "email_verification_tokens"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(String(36), ForeignKey("accounts.id"), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 # Create tables
 Base.metadata.create_all(bind=engine)
+
+# Initialize auth module with references (breaks circular import)
+_auth_mod.JWT_SECRET = JWT_SECRET
+_auth_mod.SessionLocal = SessionLocal
+_auth_mod.Account = Account
 
 # ── Pydantic Models (validation) ──
 
@@ -407,6 +435,14 @@ def create_access_token(data: dict, expires_hours: int = 24) -> str:
     return jwt.encode(to_encode, JWT_SECRET, algorithm="HS256")
 
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 def verify_token(request: Request, db: Session = Depends(get_db)) -> str:
     """Extract and verify account_id from JWT. Returns account_id or raises 401.
     MEDIUM-NEW-3: Also checks that account is_active."""
@@ -425,14 +461,6 @@ def verify_token(request: Request, db: Session = Depends(get_db)) -> str:
         return account_id
     except JWTError:
         raise HTTPException(401, "Token expired or invalid")
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # ── Rate Limiting (bounded, with periodic cleanup) ──
@@ -788,8 +816,6 @@ app.add_middleware(
 )
 
 # ── Stripe Payments ──
-from stripe_payments import router as payments_router
-app.include_router(payments_router)
 
 @app.get("/health")
 async def health():
@@ -846,6 +872,58 @@ async def login(data: LoginRequest, request: Request, db: Session = Depends(get_
         logging.info(f"Upgraded password hash for account {account.id}")
     token = create_access_token({"sub": account.id})
     return {"token": token, "account_id": account.id, "brand_name": account.brand_name}
+
+
+# ── Forgot/Reset Password ──
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., max_length=255)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=10, max_length=200)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password(data: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    """Send password reset email if account exists. Always returns success (don't reveal if email exists)."""
+    rate_limit(request, max_requests=5, window_seconds=300)  # 5 per 5 min
+    account = db.query(Account).filter(Account.email == data.email).first()
+    if account:
+        try:
+            from auth_email import generate_reset_token, send_password_reset_email, _is_rate_limited
+            if _is_rate_limited(db, PasswordResetToken, account.id, 3):  # 3 per hour
+                logging.warning(f"Rate limited password reset for {data.email}")
+            else:
+                token = generate_reset_token(db, account.id)
+                send_password_reset_email(data.email, token)
+        except Exception as e:
+            logging.error(f"Password reset email failed: {e}")
+    # Always return success — don't reveal whether email exists
+    return {"status": "sent", "message": "If an account with that email exists, we've sent a reset link."}
+
+
+@app.post("/api/auth/reset-password")
+async def reset_password(data: ResetPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    """Reset password using token from email."""
+    rate_limit(request, max_requests=5, window_seconds=300)
+    try:
+        from auth_email import verify_reset_token
+        account_id = verify_reset_token(db, data.token)
+        if not account_id:
+            raise HTTPException(400, "Invalid or expired reset token")
+        account = db.query(Account).filter(Account.id == account_id).first()
+        if not account:
+            raise HTTPException(400, "Account not found")
+        account.password_hash = hash_password(data.new_password)
+        db.commit()
+        return {"status": "reset", "message": "Password reset successfully. You can now log in."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Password reset failed: {e}")
+        raise HTTPException(500, "Password reset failed")
 
 
 # ── Provider Proxy (A1 — keys server-side) ──
@@ -2950,6 +3028,10 @@ def _auto_migrate():
 
 
 _auto_migrate()
+
+# ── Stripe Payments (safe to import — stripe_payments gets verify_token from auth.py) ──
+from stripe_payments import router as payments_router
+app.include_router(payments_router)
 
 if __name__ == "__main__":
     import uvicorn

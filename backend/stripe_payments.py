@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
+from auth import verify_token
+
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
 
