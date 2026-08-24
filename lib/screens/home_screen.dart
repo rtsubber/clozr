@@ -4,7 +4,9 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../models/meeting.dart';
+import '../models/meeting_minutes.dart';
 import '../services/meeting_storage.dart';
+import '../screens/minutes_screen.dart';
 import '../main.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -16,6 +18,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   List<Meeting> _recentMeetings = [];
+  List<MeetingMinutes> _savedMinutes = [];
   bool _isCheckingAuth = true;
 
   @override
@@ -34,6 +37,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     
     if (auth.isAuthenticated) {
       _loadMeetings();
+      _loadMinutes();
     }
   }
 
@@ -43,6 +47,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     if (mounted) {
       setState(() => _recentMeetings = meetings);
     }
+  }
+
+  Future<void> _loadMinutes() async {
+    final auth = ref.read(authProvider);
+    if (!auth.isAuthenticated) return;
+    try {
+      final response = await http.get(
+        Uri.parse('${auth.apiUrl}/api/minutes'),
+        headers: auth.authHeaders,
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final list = data is List ? data : (data['minutes'] as List? ?? []);
+        if (mounted) {
+          setState(() => _savedMinutes = list
+              .map((m) => MeetingMinutes.fromJson(m as Map<String, dynamic>))
+              .toList());
+        }
+      }
+    } catch (_) {}
   }
 
   final _emailController = TextEditingController();
@@ -158,6 +182,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       if (success) {
         setState(() { _isLoggingIn = false; });
         _loadMeetings();
+        _loadMinutes();
       } else {
         setState(() {
           _isLoggingIn = false;
@@ -191,7 +216,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
     
     // Refresh meetings list when returning from meeting
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadMeetings());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadMeetings();
+      _loadMinutes();
+    });
     
     return Scaffold(
       body: SafeArea(
@@ -294,6 +322,79 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
                     const SizedBox(height: 16),
 
+                    // ── Alternative Input Modes ──
+                    Row(
+                      children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => context.push('/text-input?tab=0'),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF16161D),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: const Color(0xFF2A2A3A)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    width: 36, height: 36,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF00D2D3).withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: const Icon(Icons.content_paste_rounded, size: 18, color: Color(0xFF00D2D3)),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  const Text('Paste Notes',
+                                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                                  const SizedBox(height: 3),
+                                  Text('Paste meeting notes & get a proposal',
+                                      style: TextStyle(fontSize: 11, color: Color(0xFF8B8BA0))),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => context.push('/text-input?tab=1'),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF16161D),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: const Color(0xFF2A2A3A)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    width: 36, height: 36,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFFD93D).withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: const Icon(Icons.bolt_rounded, size: 18, color: Color(0xFFFFD93D)),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  const Text('Quick Proposal',
+                                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                                  const SizedBox(height: 3),
+                                  Text('Answer a few questions, get a proposal',
+                                      style: TextStyle(fontSize: 11, color: Color(0xFF8B8BA0))),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 10),
+
                     // ── Wake word hint (Coming Soon) ──
                     Container(
                       width: double.infinity,
@@ -341,6 +442,50 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             ),
                           ),
                         ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // ── Meeting Minutes shortcut ──
+                    GestureDetector(
+                      onTap: () => context.push('/meeting'),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF16161D),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFF2A2A3A)),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 36, height: 36,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00E676).withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(Icons.note_alt_outlined, size: 18, color: Color(0xFF00E676)),
+                            ),
+                            const SizedBox(width: 12),
+                            const Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('Meeting Minutes',
+                                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                                  SizedBox(height: 2),
+                                  Text('Generate structured minutes from any meeting',
+                                      style: TextStyle(fontSize: 12, color: Color(0xFF8B8BA0))),
+                                ],
+                              ),
+                            ),
+                            Transform.rotate(
+                              angle: 3.14159 / 2,
+                              child: const Icon(Icons.chevron_right, color: Color(0xFF8B8BA0), size: 20),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -403,11 +548,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     const SizedBox(width: 10),
                     _statChip(context, Icons.auto_awesome_outlined, '${_recentMeetings.fold<int>(0, (sum, m) => sum + m.workflowCount)}', 'Workflows'),
                     const SizedBox(width: 10),
-                    _statChip(context, Icons.description_outlined, '${_recentMeetings.where((m) => m.summary != null).length}', 'Summarized'),
+                    _statChip(context, Icons.note_alt_outlined, '${_savedMinutes.length}', 'Minutes'),
                   ],
                 ),
               ),
             ),
+
+            // ── Meeting Minutes ──
+            if (_savedMinutes.isNotEmpty) ...[
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(24, 24, 24, 8),
+                  child: Text('Meeting Minutes',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) => _minutesCard(context, _savedMinutes[index]),
+                    childCount: _savedMinutes.length,
+                  ),
+                ),
+              ),
+            ],
 
             // ── Recent Meetings ──
             const SliverToBoxAdapter(
@@ -484,6 +649,71 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             const SizedBox(height: 2),
             Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF8B8BA0))),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _minutesCard(BuildContext context, MeetingMinutes minutes) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF16161D),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF2A2A3A)),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () {
+            final meetingId = minutes.meetingId ?? minutes.id;
+            Navigator.push(context, MaterialPageRoute(
+              builder: (_) => MinutesScreen(
+                meetingId: meetingId,
+                minutesData: minutes.toJson(),
+              ),
+            ));
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  width: 44, height: 44,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00E676).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.note_alt_outlined, color: Color(0xFF00E676), size: 22),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(minutes.meetingTitle, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                      const SizedBox(height: 3),
+                      Text('${minutes.attendees.length} attendees · ${minutes.actionItems.length} action items',
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF8B8BA0))),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00E676).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    minutes.meetingType,
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF00E676)),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

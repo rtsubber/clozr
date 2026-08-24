@@ -8,8 +8,13 @@ import 'screens/proposal_view_screen.dart';
 import 'screens/followup_email_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/catalog_screen.dart';
+import 'screens/onboarding_screen.dart';
+import 'screens/forgot_password_screen.dart';
+import 'screens/reset_password_screen.dart';
+import 'screens/verify_email_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/pricing_screen.dart';
+import 'screens/text_input_screen.dart';
 import 'services/auth_service.dart';
 import 'services/app_config.dart';
 
@@ -38,14 +43,37 @@ final router = GoRouter(
   routes: [
     GoRoute(path: '/', builder: (context, state) => const HomeScreen()),
     GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+    GoRoute(path: '/forgot-password', builder: (context, state) => const ForgotPasswordScreen()),
+    GoRoute(
+      path: '/reset-password',
+      builder: (context, state) {
+        final token = state.uri.queryParameters['token'] ?? '';
+        return ResetPasswordScreen(token: token);
+      },
+    ),
+    GoRoute(
+      path: '/verify-email',
+      builder: (context, state) {
+        final token = state.uri.queryParameters['token'] ?? '';
+        return VerifyEmailScreen(token: token);
+      },
+    ),
     GoRoute(path: '/meeting', builder: (context, state) => const MeetingScreen()),
+    GoRoute(
+      path: '/text-input',
+      builder: (context, state) {
+        final tab = int.tryParse(state.uri.queryParameters['tab'] ?? '0') ?? 0;
+        return TextInputScreen(initialTab: tab);
+      },
+    ),
     GoRoute(path: '/meeting/:id', builder: (context, state) {
       final meetingId = state.pathParameters['id']!;
       return MeetingScreen(meetingId: meetingId);
     }),
     GoRoute(path: '/proposal/:id', builder: (context, state) {
       final meetingId = state.pathParameters['id']!;
-      return ProposalScreen(meetingId: meetingId);
+      final transcript = state.uri.queryParameters['transcript'];
+      return ProposalScreen(meetingId: meetingId, transcript: transcript);
     }),
     GoRoute(path: '/proposal/view/:proposalId', builder: (context, state) {
       final proposalId = state.pathParameters['proposalId']!;
@@ -57,6 +85,7 @@ final router = GoRouter(
       return FollowUpEmailScreen(meetingId: meetingId);
     }),
     GoRoute(path: '/catalog', builder: (context, state) => const CatalogScreen()),
+    GoRoute(path: '/onboarding', builder: (context, state) => const OnboardingScreen()),
     GoRoute(path: '/pricing', builder: (context, state) => const PricingScreen()),
   ],
 );

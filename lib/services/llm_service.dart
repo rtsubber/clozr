@@ -22,7 +22,7 @@ class LLMService {
         'transcript': transcript,
         'task': 'summarize',
       }),
-    );
+    ).timeout(const Duration(seconds: 180));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -53,7 +53,7 @@ class LLMService {
         'transcript': transcript,
         'task': 'detect_workflows',
       }),
-    );
+    ).timeout(const Duration(seconds: 180));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -87,7 +87,7 @@ class LLMService {
         'transcript': transcript,
         'task': 'generate_proposal',
       }),
-    );
+    ).timeout(const Duration(seconds: 300));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -105,6 +105,39 @@ class LLMService {
     throw Exception('Proposal generation failed: ${response.statusCode}');
   }
 
+  /// Generate meeting minutes from a transcript via backend proxy
+  Future<Map<String, dynamic>> generateMinutes({
+    required String transcript,
+  }) async {
+    if (!_auth.isAuthenticated) {
+      throw Exception('Not authenticated. Please log in.');
+    }
+
+    final response = await http.post(
+      Uri.parse('${_auth.apiUrl}/api/llm'),
+      headers: _auth.authHeaders,
+      body: jsonEncode({
+        'transcript': transcript,
+        'task': 'generate_minutes',
+      }),
+    ).timeout(const Duration(seconds: 300));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      final result = data['result'];
+      if (result is Map<String, dynamic>) {
+        return result;
+      }
+      return {'raw_content': result.toString()};
+    }
+
+    if (response.statusCode == 401) {
+      throw Exception('Session expired. Please log in again.');
+    }
+
+    throw Exception('Meeting minutes generation failed: ${response.statusCode}');
+  }
+
   /// Generate a follow-up email from meeting data via backend proxy
   Future<Map<String, dynamic>> generateFollowUp({
     required String transcript,
@@ -120,7 +153,7 @@ class LLMService {
         'transcript': transcript,
         'task': 'generate_followup',
       }),
-    );
+    ).timeout(const Duration(seconds: 180));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);

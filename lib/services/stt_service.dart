@@ -20,6 +20,7 @@ import '../models/meeting.dart';
 class STTService {
   final AuthService _auth;
   final STTRecorder _recorder = STTRecorder();
+  String get debugState => _recorder.debugState; // Expose recorder debug state
 
   bool _isRecording = false;
   String _transcript = '';
@@ -60,8 +61,14 @@ class STTService {
     try {
       final audioData = await _recorder.stop();
       
-      if (audioData == null || audioData.isEmpty) {
-        return {'transcript': '', 'segments': []};
+      if (audioData == null) {
+        // Timeout waiting for audio data — recorder may have failed
+        throw Exception('Recording failed: timed out waiting for audio data. The recorder may have stopped unexpectedly. Try refreshing the page.');
+      }
+      
+      if (audioData.isEmpty) {
+        // Recorder was inactive or no audio captured
+        throw Exception('No audio captured. The recorder may have stopped unexpectedly. Try recording again.');
       }
 
       // Upload to backend for transcription
@@ -81,12 +88,16 @@ class STTService {
     // Choose endpoint based on diarization toggle
     final endpoint = _enableDiarization ? '/api/stt/diarize' : '/api/stt';
     final uri = Uri.parse('${_auth.apiUrl}$endpoint');
+    
+    // Use the actual mime type from the recorder (Safari records as audio/mp4)
+    final mimeType = _recorder.mimeType;
+    final ext = mimeType.contains('mp4') ? 'm4a' : 'webm';
     final request = http.MultipartRequest('POST', uri)
       ..headers.addAll(_auth.authHeaders)
       ..files.add(http.MultipartFile.fromBytes(
         'audio',
         audioData,
-        filename: 'recording.webm',
+        filename: 'recording.$ext',
       ));
 
     final response = await request.send();

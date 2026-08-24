@@ -317,6 +317,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                   ),
                 ),
+
+                // Forgot password link (login only)
+                if (_isLogin) ...[
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: () => context.go('/forgot-password'),
+                    child: const Text(
+                      'Forgot password?',
+                      style: TextStyle(color: Color(0xFF6C5CE7), fontSize: 14),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

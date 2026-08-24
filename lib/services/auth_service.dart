@@ -245,6 +245,81 @@ class AuthService {
     }
   }
 
+  /// Forgot password — sends reset email
+  /// Always returns true (no email enumeration)
+  Future<bool> forgotPassword({required String email}) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$apiUrl/api/auth/forgot-password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email}),
+      );
+      // Always treat as success (no email enumeration)
+      return true;
+    } catch (_) {
+      // Even on network error, don't reveal info
+      return true;
+    }
+  }
+
+  /// Reset password with token from email link
+  Future<bool> resetPassword({
+    required String token,
+    required String newPassword,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$apiUrl/api/auth/reset-password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'token': token,
+          'password': newPassword,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        // Auto-login after reset
+        final data = jsonDecode(response.body);
+        _token = data['token'] as String?;
+        _accountId = data['account_id'] as String?;
+        _brandName = data['brand_name'] as String? ?? 'The Clozr';
+        await _saveToStorage();
+        return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Verify email with token from email link
+  Future<bool> verifyEmail({required String token}) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$apiUrl/api/auth/verify-email'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'token': token}),
+      );
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Resend verification email
+  Future<bool> resendVerification({required String email}) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$apiUrl/api/auth/resend-verification'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': email}),
+      );
+      return true; // Don't reveal whether email exists
+    } catch (_) {
+      return true;
+    }
+  }
+
   /// Logout — clear stored auth
   Future<void> logout() async {
     _token = null;

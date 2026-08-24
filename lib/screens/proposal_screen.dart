@@ -13,8 +13,9 @@ import '../main.dart';
 class ProposalScreen extends ConsumerStatefulWidget {
   final String meetingId;
   final Map<String, dynamic>? proposalData;
+  final String? transcript; // Pass transcript directly if meeting wasn't saved
   
-  const ProposalScreen({super.key, required this.meetingId, this.proposalData});
+  const ProposalScreen({super.key, required this.meetingId, this.proposalData, this.transcript});
 
   @override
   ConsumerState<ProposalScreen> createState() => _ProposalScreenState();
@@ -79,12 +80,31 @@ class _ProposalScreenState extends ConsumerState<ProposalScreen> {
       final auth = ref.read(authProvider);
       final llm = LLMService(auth);
       
-      final meetings = await MeetingStorage.loadAll(auth);
-      final meeting = meetings.firstWhere(
-        (m) => m.id == widget.meetingId, 
-        orElse: () => Meeting(id: '', title: 'Unknown', date: DateTime.now()),
-      );
-      final transcript = meeting.transcript ?? '';
+      // Use passed transcript first, then fall back to meeting storage
+      String transcript = widget.transcript ?? '';
+      
+      if (transcript.isEmpty) {
+        // Try fetching from API directly (meeting may not be in local storage yet)
+        try {
+          final response = await http.get(
+            Uri.parse('${auth.apiUrl}/api/meetings/${widget.meetingId}'),
+            headers: auth.authHeaders,
+          );
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            transcript = data['transcript'] ?? '';
+          }
+        } catch (_) {}
+      }
+      
+      if (transcript.isEmpty) {
+        final meetings = await MeetingStorage.loadAll(auth);
+        final meeting = meetings.firstWhere(
+          (m) => m.id == widget.meetingId, 
+          orElse: () => Meeting(id: '', title: 'Unknown', date: DateTime.now()),
+        );
+        transcript = meeting.transcript ?? '';
+      }
       
       if (transcript.isEmpty) {
         setState(() {
@@ -477,7 +497,7 @@ class _ProposalScreenState extends ConsumerState<ProposalScreen> {
     if (_proposal!.solutions.isNotEmpty) {
       text.writeln('Recommended Solutions:');
       for (final s in _proposal!.solutions) {
-        text.writeln('• ${s.service}: ${s.description} (${s.monthlyCost}/mo, saves ${s.timeSaved})');
+        text.writeln('• ${s.service}: ${s.description} (${s.monthlyCost}, saves ${s.timeSaved})');
       }
       text.writeln();
     }

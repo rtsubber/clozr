@@ -143,13 +143,25 @@ void injectSTTScript() {
       window._clozrSTTStart = async function() {
         window._clozrSTTError = null;
         window._clozrSTTStartStatus = 'pending';
+        window._clozrSTTResult = null; // Clear stale result from previous recording
         try {
           var stream = await navigator.mediaDevices.getUserMedia({audio: true, video: false});
           window._clozrSTTStream = stream;
           window._clozrSTTChunks = [];
-          var options = {mimeType: 'audio/webm;codecs=opus'};
-          if (typeof MediaRecorder !== 'undefined' && !MediaRecorder.isTypeSupported(options.mimeType)) {
-            options = {};
+          var options = {};
+          window._clozrSTTMimeType = null;
+          if (typeof MediaRecorder !== 'undefined') {
+            if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+              options = {mimeType: 'audio/webm;codecs=opus'};
+              window._clozrSTTMimeType = 'audio/webm';
+            } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+              options = {mimeType: 'audio/webm'};
+              window._clozrSTTMimeType = 'audio/webm';
+            } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+              options = {mimeType: 'audio/mp4'};
+              window._clozrSTTMimeType = 'audio/mp4';
+            }
+            // else: let browser choose default format
           }
           window._clozrSTTRecorder = new MediaRecorder(stream, options);
           window._clozrSTTRecorder.ondataavailable = function(e) {
@@ -157,7 +169,12 @@ void injectSTTScript() {
               window._clozrSTTChunks.push(e.data);
             }
           };
+          window._clozrSTTRecorder.onerror = function(e) {
+            console.error('Clozr MediaRecorder error:', e.error || e);
+            window._clozrSTTError = 'Recording error: ' + (e.error ? e.error.message : 'unknown');
+          };
           window._clozrSTTRecorder.start(1000);
+          console.log('Clozr: MediaRecorder started, state=' + window._clozrSTTRecorder.state + ', mimeType=' + (window._clozrSTTMimeType || 'default'));
           window._clozrSTTStartStatus = 'success';
         } catch (e) {
           console.error('STT start error:', e.name, e.message);
@@ -176,17 +193,35 @@ void injectSTTScript() {
 
       window._clozrSTTStop = function() {
         var rec = window._clozrSTTRecorder;
+        window._clozrSTTResult = null; // Clear before starting stop process
         if (!rec || rec.state === 'inactive') {
+          console.error('Clozr: Recorder is ' + (!rec ? 'null' : 'inactive') + ' at stop time. Chunks: ' + window._clozrSTTChunks.length);
           window._clozrSTTResult = new Uint8Array(0);
           return;
         }
+        var mimeType = window._clozrSTTMimeType || 'audio/webm';
+        console.log('Clozr: Stopping recorder, chunks=' + window._clozrSTTChunks.length + ', state=' + rec.state);
         rec.onstop = function() {
-          var blob = new Blob(window._clozrSTTChunks);
+          console.log('Clozr: Recorder stopped. Chunks: ' + window._clozrSTTChunks.length);
+          var blobOptions = mimeType ? {type: mimeType} : {};
+          try {
+            var blob = new Blob(window._clozrSTTChunks, blobOptions);
+          } catch(e) {
+            console.error('Clozr: Blob creation error:', e);
+            var blob = new Blob(window._clozrSTTChunks);
+          }
+          console.log('Clozr: Blob created, size=' + blob.size + ', type=' + blob.type);
           if (window._clozrSTTStream) {
             window._clozrSTTStream.getTracks().forEach(function(t) { t.stop(); });
           }
+          // Store actual mime type for Safari (audio/mp4) vs Chrome (audio/webm)
+          window._clozrSTTMimeType = blob.type || mimeType;
           blob.arrayBuffer().then(function(buf) {
             window._clozrSTTResult = new Uint8Array(buf);
+            console.log('Clozr: Audio data ready, size=' + window._clozrSTTResult.length + ' bytes');
+          }).catch(function(err) {
+            console.error('Clozr: arrayBuffer error:', err);
+            window._clozrSTTResult = new Uint8Array(0);
           });
         };
         rec.stop();
@@ -200,6 +235,27 @@ void injectSTTScript() {
         if (window._clozrSTTStream) {
           window._clozrSTTStream.getTracks().forEach(function(t) { t.stop(); });
         }
+      };
+
+      // Handle the case where the recorder went inactive but chunks exist
+      // (e.g., browser auto-stopped recording, second recording attempt)
+      window._clozrSTTStop_fromInactive = function() {
+        var mimeType = window._clozrSTTMimeType || 'audio/webm';
+        console.log('Clozr: Recovering audio from ' + window._clozrSTTChunks.length + ' chunks (recorder was inactive)');
+        try {
+          var blob = new Blob(window._clozrSTTChunks, mimeType ? {type: mimeType} : {});
+        } catch(e) {
+          console.error('Clozr: Blob creation error in fromInactive:', e);
+          var blob = new Blob(window._clozrSTTChunks);
+        }
+        window._clozrSTTMimeType = blob.type || mimeType;
+        blob.arrayBuffer().then(function(buf) {
+          window._clozrSTTResult = new Uint8Array(buf);
+          console.log('Clozr: Recovered audio, size=' + window._clozrSTTResult.length + ' bytes');
+        }).catch(function(err) {
+          console.error('Clozr: arrayBuffer error in fromInactive:', err);
+          window._clozrSTTResult = new Uint8Array(0);
+        });
       };
     })();
   ''';

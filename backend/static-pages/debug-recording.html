@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Clozr Recording Debug</title>
+    <style>
+        body { font-family: monospace; background: #0D0D12; color: #fff; padding: 20px; max-width: 600px; margin: 0 auto; }
+        button { padding: 15px 30px; font-size: 18px; margin: 10px; cursor: pointer; border: none; border-radius: 8px; }
+        #start { background: #6C5CE7; color: white; }
+        #stop { background: #FF6B6B; color: white; }
+        #log { background: #1a1a2e; padding: 15px; border-radius: 8px; margin-top: 20px; white-space: pre-wrap; font-size: 13px; max-height: 400px; overflow-y: auto; }
+        .ok { color: #00D2D3; } .err { color: #FF6B6B; } .info { color: #8B8BA0; }
+    </style>
+</head>
+<body>
+    <h2>Clozr Recording Debug</h2>
+    <p>Step-by-step test of mic recording and upload.</p>
+    <div id="loginStatus">Checking login...</div>
+    <br>
+    <button id="start" onclick="startRec()">🎤 Start Recording</button>
+    <button id="stop" onclick="stopRec()" disabled>⏹ Stop & Transcribe</button>
+    <div id="status" style="margin-top:10px;font-size:16px;">Ready</div>
+    <div id="log"></div>
+    
+    <script>
+    const API = window.location.origin.replace(/:\d+$/, ':8510');
+    let recorder = null;
+    let stream = null;
+    let chunks = [];
+    let mimeType = null;
+    let authToken = null;
+    
+    function log(msg, type) {
+        type = type || 'info';
+        const el = document.getElementById('log');
+        const cls = type === 'ok' ? 'ok' : type === 'err' ? 'err' : 'info';
+        el.innerHTML += '<span class="' + cls + '">[' + new Date().toLocaleTimeString() + '] ' + msg + '</span>\n';
+        el.scrollTop = el.scrollHeight;
+        console.log(msg);
+    }
+    
+    // Auto-login
+    async function autoLogin() {
+        // Try localStorage first (from main app)
+        try {
+            const stored = localStorage.getItem('clozr_auth');
+            if (stored) {
+                authToken = JSON.parse(stored).token;
+                log('Got token from localStorage', 'ok');
+                document.getElementById('loginStatus').innerHTML = '<span style="color:#00D2D3">✅ Logged in (from app)</span>';
+                return true;
+            }
+        } catch(e) {}
+        
+        // Try logging in with credentials
+        log('Logging in...');
+        try {
+            const resp = await fetch(API + '/api/auth/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({email: 'ron@brandbooststudio.co', password: '***'})
+            });
+            const data = await resp.json();
+            if (data.token) {
+                authToken = data.token;
+                log('✅ Logged in', 'ok');
+                document.getElementById('loginStatus').innerHTML = '<span style="color:#00D2D3">✅ Logged in</span>';
+                return true;
+            } else {
+                log('❌ Login failed: ' + JSON.stringify(data), 'err');
+                document.getElementById('loginStatus').innerHTML = '<span style="color:#FF6B6B">❌ Login failed</span>';
+                return false;
+            }
+        } catch(e) {
+            log('❌ Login error: ' + e.message, 'err');
+            document.getElementById('loginStatus').innerHTML = '<span style="color:#FF6B6B">❌ Network error - is the server running?</span>';
+            return false;
+        }
+    }
+    
+    async function startRec() {
+        if (!authToken) {
+            const ok = await autoLogin();
+            if (!ok) return;
+        }
+        
+        log('Requesting mic access...');
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true},
+                video: false
+            });
+            log('✅ Got mic stream (' + stream.getTracks().length + ' tracks)', 'ok');
+        } catch(e) {
+            log('❌ Mic denied: ' + e.message, 'err');
+            return;
+        }
+        
+        chunks = [];
+        mimeType = null;
+        
+        if (typeof MediaRecorder !== 'undefined') {
+            if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+                mimeType = 'audio/webm';
+                log('Format: audio/webm (Chrome/Firefox)');
+            } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+                mimeType = 'audio/mp4';
+                log('Format: audio/mp4 (Safari)');
+            } else {
+                log('Format: browser default');
+            }
+        } else {
+            log('❌ MediaRecorder NOT available!', 'err');
+            return;
+        }
+        
+        var opts = mimeType ? {mimeType: mimeType === 'audio/webm' ? 'audio/webm;codecs=opus' : mimeType} : {};
+        try {
+            recorder = new MediaRecorder(stream, opts);
+            log('✅ MediaRecorder created (state: ' + recorder.state + ')', 'ok');
+        } catch(e) {
+            log('❌ MediaRecorder failed: ' + e.message, 'err');
+            return;
+        }
+        
+        recorder.ondataavailable = (e) => {
+            if (e.data.size > 0) {
+                chunks.push(e.data);
+                log('Chunk: ' + e.data.size + ' bytes');
+            }
+        };
+        
+        recorder.onerror = (e) => {
+            log('❌ Recorder error: ' + (e.error || 'unknown'), 'err');
+        };
+        
+        recorder.start(1000);
+        log('🎤 Recording... Speak now!', 'ok');
+        document.getElementById('start').disabled = true;
+        document.getElementById('stop').disabled = false;
+        document.getElementById('status').textContent = '🔴 Recording...';
+    }
+    
+    async function stopRec() {
+        if (!recorder || recorder.state === 'inactive') {
+            log('❌ Recorder not active!', 'err');
+            return;
+        }
+        
+        log('⏹ Stopping...');
+        
+        recorder.onstop = async () => {
+            log('Recorder stopped. ' + chunks.length + ' chunks total');
+            stream.getTracks().forEach(t => t.stop());
+            log('Mic stream stopped');
+            
+            var blobOpts = mimeType ? {type: mimeType} : {};
+            try {
+                var blob = new Blob(chunks, blobOpts);
+            } catch(e) {
+                var blob = new Blob(chunks);
+            }
+            log('📦 Blob: ' + blob.size + ' bytes, type: ' + (blob.type || 'unknown'), 'ok');
+            
+            if (blob.size === 0) {
+                log('❌ Empty blob! No audio captured.', 'err');
+                document.getElementById('status').textContent = 'Error: No audio captured';
+                return;
+            }
+            
+            // Upload to STT
+            log('Uploading to /api/stt...');
+            const ext = (mimeType === 'audio/mp4') ? 'm4a' : 'webm';
+            const formData = new FormData();
+            formData.append('audio', blob, 'recording.' + ext);
+            
+            try {
+                const resp = await fetch(API + '/api/stt', {
+                    method: 'POST',
+                    headers: {'Authorization': 'Bearer ' + authToken},
+                    body: formData
+                });
+                
+                log('STT response: ' + resp.status + ' ' + resp.statusText);
+                const data = await resp.json();
+                
+                if (resp.status === 200 && data.transcript) {
+                    log('✅ TRANSCRIPT: "' + data.transcript.substring(0, 300) + '"', 'ok');
+                    log('Duration: ' + (data.duration || '?') + 's');
+                    document.getElementById('status').textContent = '✅ Transcription successful!';
+                } else if (resp.status === 403) {
+                    log('⚠️ Free tier limit reached (403). Transcription still works, meeting save would be blocked.', 'err');
+                    document.getElementById('status').textContent = '⚠️ Free tier limit';
+                } else {
+                    log('❌ STT failed: ' + JSON.stringify(data).substring(0, 300), 'err');
+                    document.getElementById('status').textContent = 'Error: ' + resp.status;
+                }
+            } catch(e) {
+                log('❌ Network error: ' + e.message, 'err');
+                document.getElementById('status').textContent = 'Network error';
+            }
+        };
+        
+        recorder.stop();
+        document.getElementById('stop').disabled = true;
+        document.getElementById('start').disabled = false;
+        document.getElementById('status').textContent = 'Processing...';
+    }
+    
+    // Auto-login on page load
+    autoLogin();
+    </script>
+</body>
+</html>

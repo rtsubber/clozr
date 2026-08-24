@@ -1,6 +1,7 @@
 library stt_recorder_web;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:js' as js;
 import 'dart:html' as html;
 import 'dart:typed_data';
@@ -40,40 +41,30 @@ class STTRecorder {
     // Call stop which triggers blob conversion and stores result
     js.context.callMethod('eval', ['window._clozrSTTStop()']);
 
-    // Poll for result — the JS stop function sets window._clozrSTTResult
+    // Poll for result — the JS stop function sets window._clozrSTTResultBase64
     // when the blob is ready (async because of arrayBuffer conversion)
     for (int i = 0; i < 80; i++) { // 8 second timeout
       await Future.delayed(const Duration(milliseconds: 100));
       try {
         final hasResult = js.context.callMethod('eval', [
-          'window._clozrSTTResult !== null && window._clozrSTTResult !== undefined'
+          'window._clozrSTTResultBase64 !== null && window._clozrSTTResultBase64 !== undefined'
         ]);
         if (hasResult == true) {
-          // Extract bytes using a helper function that avoids minification issues
-          final byteLength = js.context.callMethod('eval', [
-            'window._clozrSTTResult.length'
-          ]) as int;
-          
-          if (byteLength == 0) {
-            js.context.callMethod('eval', ['window._clozrSTTResult = null']);
-            return Uint8List(0);
-          }
-          
-          // Copy bytes using a JS slice + base64 approach to avoid minification
-          final base64 = js.context.callMethod('eval', [
-            'Array.from(window._clozrSTTResult).map(function(b){return String.fromCharCode(b)}).join("")'
+          // Get base64 string from JS — this preserves binary data correctly
+          final base64Str = js.context.callMethod('eval', [
+            'window._clozrSTTResultBase64'
           ]) as String;
           
           // Clear the result
+          js.context.callMethod('eval', ['window._clozrSTTResultBase64 = null']);
           js.context.callMethod('eval', ['window._clozrSTTResult = null']);
           
-          // Convert base64-like string to bytes
-          final bytes = Uint8List(byteLength);
-          for (int j = 0; j < byteLength && j < base64.length; j++) {
-            bytes[j] = base64.codeUnitAt(j) & 0xFF;
+          if (base64Str.isEmpty) {
+            return Uint8List(0);
           }
           
-          return bytes;
+          // Decode base64 to bytes — proper binary transfer
+          return _base64Decode(base64Str);
         }
       } catch (e) {
         // Keep polling
@@ -81,6 +72,22 @@ class STTRecorder {
     }
 
     return Uint8List(0);
+  }
+
+  /// Decode base64 string to Uint8List
+  Uint8List _base64Decode(String base64Str) {
+    // Use dart:convert's base64 decoder
+    return base64Decode(base64Str);
+  }
+
+  /// Get the detected audio MIME type (e.g. 'audio/webm' or 'audio/mp4' for Safari)
+  String get mimeType {
+    try {
+      final mt = js.context.callMethod('eval', ['window._clozrSTTMimeType || "audio/webm"']);
+      return mt as String? ?? 'audio/webm';
+    } catch (_) {
+      return 'audio/webm';
+    }
   }
 
   /// Cancel recording without returning data
@@ -106,21 +113,58 @@ class STTRecorder {
     window._clozrSTTStream = null;
     window._clozrSTTChunks = [];
     window._clozrSTTResult = null;
+    window._clozrSTTMimeType = null; // Track actual mime type for Safari
     
     window._clozrSTTStart = async function() {
       try {
-        var stream = await navigator.mediaDevices.getUserMedia({audio: true, video: false});
+        // Safari requires HTTPS for getUserMedia (we have that via Cloudflare)
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          console.error('getUserMedia not available (requires HTTPS)');
+          return false;
+        }
+        
+        var stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          },
+          video: false
+        });
         window._clozrSTTStream = stream;
         window._clozrSTTChunks = [];
-        var options = {mimeType: 'audio/webm;codecs=opus'};
-        if (typeof MediaRecorder !== 'undefined' && !MediaRecorder.isTypeSupported(options.mimeType)) {
-          options = {};
+        
+        // Safari compatibility: prefer webm/opus, fall back to mp4/aac, then default
+        var options = {};
+        var mimeType = null;
+        if (typeof MediaRecorder !== 'undefined') {
+          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            options = {mimeType: 'audio/webm;codecs=opus'};
+            mimeType = 'audio/webm';
+          } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+            options = {mimeType: 'audio/webm'};
+            mimeType = 'audio/webm';
+          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+            // Safari 14.1+ records as audio/mp4 (AAC)
+            options = {mimeType: 'audio/mp4'};
+            mimeType = 'audio/mp4';
+          } else if (MediaRecorder.isTypeSupported('audio/aac')) {
+            options = {mimeType: 'audio/aac'};
+            mimeType = 'audio/aac';
+          }
+          // else: let browser choose default format
         }
+        window._clozrSTTMimeType = mimeType;
+        console.log('Clozr recording format:', mimeType || 'browser default');
+        
         window._clozrSTTRecorder = new MediaRecorder(stream, options);
         window._clozrSTTRecorder.ondataavailable = function(e) {
           if (e.data.size > 0) {
             window._clozrSTTChunks.push(e.data);
           }
+        };
+        window._clozrSTTRecorder.onerror = function(e) {
+          console.error('MediaRecorder error:', e.error);
         };
         window._clozrSTTRecorder.start(1000);
         return true;
@@ -133,17 +177,68 @@ class STTRecorder {
     window._clozrSTTStop = function() {
       var rec = window._clozrSTTRecorder;
       if (!rec || rec.state === 'inactive') {
-        window._clozrSTTResult = new Uint8Array(0);
+        window._clozrSTTResultBase64 = ''; // Signal: empty result
         return;
       }
+      var mimeType = window._clozrSTTMimeType || 'audio/webm';
       rec.onstop = function() {
-        var blob = new Blob(window._clozrSTTChunks);
+        // Use the detected mime type for the blob
+        // Safari records as audio/mp4, Chrome as audio/webm
+        var blobOptions = mimeType ? {type: mimeType} : {};
+        try {
+          var blob = new Blob(window._clozrSTTChunks, blobOptions);
+        } catch(e) {
+          // Fallback: no mime type
+          var blob = new Blob(window._clozrSTTChunks);
+        }
         if (window._clozrSTTStream) {
           window._clozrSTTStream.getTracks().forEach(function(t) { t.stop(); });
         }
-        blob.arrayBuffer().then(function(buf) {
-          window._clozrSTTResult = new Uint8Array(buf);
-        });
+        
+        console.log('Clozr: blob size=' + blob.size + ', type=' + blob.type);
+        
+        // Convert blob to base64 for safe transfer to Dart
+        // (Direct byte transfer via charCodeAt corrupts bytes > 127)
+        function arrayBufferToBase64(buffer) {
+          var bytes = new Uint8Array(buffer);
+          var binary = '';
+          var chunkSize = 32768; // Process in chunks to avoid stack overflow
+          for (var i = 0; i < bytes.length; i += chunkSize) {
+            var chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+            binary += String.fromCharCode.apply(null, chunk);
+          }
+          return btoa(binary);
+        }
+        
+        // Safari 14.1+ supports blob.arrayBuffer()
+        if (blob.arrayBuffer && typeof blob.arrayBuffer === 'function') {
+          blob.arrayBuffer().then(function(buf) {
+            try {
+              window._clozrSTTResultBase64 = arrayBufferToBase64(buf);
+              window._clozrSTTMimeType = blob.type || mimeType;
+              console.log('Clozr: base64 encoded, length=' + window._clozrSTTResultBase64.length);
+            } catch(err) {
+              console.error('Clozr: base64 encode error:', err);
+              window._clozrSTTResultBase64 = '';
+            }
+          }).catch(function(err) {
+            console.error('Clozr: arrayBuffer error:', err);
+            window._clozrSTTResultBase64 = '';
+          });
+        } else {
+          // FileReader fallback for older browsers
+          var reader = new FileReader();
+          reader.onload = function() {
+            try {
+              window._clozrSTTResultBase64 = arrayBufferToBase64(reader.result);
+              window._clozrSTTMimeType = blob.type || mimeType;
+            } catch(err) {
+              console.error('Clozr: FileReader base64 error:', err);
+              window._clozrSTTResultBase64 = '';
+            }
+          };
+          reader.readAsArrayBuffer(blob);
+        }
       };
       rec.stop();
     };
@@ -153,7 +248,7 @@ class STTRecorder {
       if (rec && rec.state !== 'inactive') {
         rec.stop();
       }
-      if (window._clozzSTTStream) {
+      if (window._clozrSTTStream) {
         window._clozrSTTStream.getTracks().forEach(function(t) { t.stop(); });
       }
     };

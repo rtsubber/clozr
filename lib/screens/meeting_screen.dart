@@ -1,9 +1,10 @@
 import 'dart:convert';
 import 'dart:io' as io;
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart' as path_provider;
@@ -15,7 +16,9 @@ import '../services/meeting_storage.dart';
 import '../models/meeting.dart';
 import '../models/workflow.dart';
 import '../screens/proposal_screen.dart';
+import '../screens/minutes_screen.dart';
 import '../screens/followup_email_screen.dart';
+import '../services/local_transcript_cache.dart';
 import '../main.dart';
 
 class MeetingScreen extends ConsumerStatefulWidget {
@@ -35,6 +38,7 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
   List<Workflow> _detectedWorkflows = [];
   String _summary = '';
   bool _isAnalyzing = false;
+  String _debugState = ''; // Debug: shows recording/stop/transcribe state
   String? _errorMessage;
   bool _isSaved = false;
   String? _savedMeetingId;
@@ -42,6 +46,8 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
   bool _isPlayingAudio = false;
   bool _livePreview = true; // Show live text while recording
   String? _audioFilename;
+  bool _limitReached = false; // Free tier limit reached
+  int _meetingsRemaining = 5; // Free tier slots
   double _audioDuration = 0.0;
   bool _enableDiarization = true; // Speaker diarization ON by default
   List<DiarizedSegment> _diarizedSegments = [];
@@ -174,6 +180,7 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _checkFreeTierLimit(); // Check limit on load
     // If a meetingId was passed, load the existing meeting
     if (widget.meetingId != null) {
       _loadExistingMeeting();
@@ -220,18 +227,23 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
   }
 
   Future<void> _toggleRecording() async {
+    // IMMEDIATE feedback - if you see this, the button handler works
+    setState(() { _debugState = '🔘 Button pressed!'; });
+    
     if (_isRecording) {
       setState(() => _isRecording = false);
       
       // Stop live preview
       _stopLivePreview();
+      setState(() { _debugState = 'Stopped recording. Checking STT service...'; });
       
       if (_sttService != null) {
         try {
           // Stop recording and transcribe via server
-          setState(() => _isAnalyzing = true);
+          setState(() { _isAnalyzing = true; _debugState = _sttService!.debugState; });
           final result = await _sttService!.stopRecording();
           final transcript = result['transcript'] as String? ?? '';
+          setState(() { _debugState = _sttService!.debugState; });
           // segments available if needed: result['segments'] as List? ?? [];
           final duration = (result['duration'] as num?)?.toDouble() ?? 0.0;
           final meetingId = result['meeting_id'] as String? ?? _savedMeetingId;
@@ -253,33 +265,61 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
           });
 
           if (transcript.trim().isNotEmpty) {
-            // Save meeting with transcript
+            // Always save locally first so transcript is never lost
+            await LocalTranscriptCache.save(transcript, title: _generateTitle(), meetingId: meetingId);
+            
+            // Save meeting with transcript (non-fatal if it fails — e.g. free tier limit)
             final savedMeeting = await _saveMeetingToBackend(transcript, meetingId);
             if (savedMeeting != null) {
               setState(() { _savedMeetingId = savedMeeting; });
+            } else {
+              // Meeting save failed (likely free tier limit) — transcript is still saved locally
+              setState(() {
+                _errorMessage = 'Meeting saved locally. Upgrade to Pro to sync to cloud, or delete old meetings to free up space.';
+              });
             }
             await _analyzeTranscript();
+          } else {
+            // Empty transcript — audio was too short, corrupted, or no speech detected
+            setState(() {
+              _isAnalyzing = false;
+              _errorMessage = 'No speech detected. Try recording again in a quieter environment, closer to the mic.';
+            });
           }
         } catch (e) {
           setState(() {
             _isAnalyzing = false;
             _errorMessage = 'Transcription failed: $e';
+            _debugState = 'ERROR: $e';
           });
         }
+      } else {
+        setState(() { _debugState = 'No STT service available'; });
       }
     } else {
+      // START RECORDING
       // Check auth before recording (STT requires auth)
       final auth = ref.read(authProvider);
+      setState(() { _debugState = '🔘 Auth check: isAuthenticated=${auth.isAuthenticated}, token=${auth.token?.substring(0, 10) ?? "null"}'; });
       if (!auth.isAuthenticated) {
         setState(() {
           _errorMessage = 'Please sign in to record meetings.';
+          _debugState = '❌ Not authenticated!';
         });
+        return;
+      }
+
+      // Check free tier limit BEFORE recording
+      if (_limitReached) {
+        setState(() { _debugState = '🔒 Free tier limit reached'; });
+        _showUpgradeModal();
         return;
       }
 
       setState(() {
         _isRecording = true;
         _errorMessage = null;
+        _debugState = '🎤 Starting recorder...';
         _transcript = '';
         _interimText = '';
         _detectedWorkflows = [];
@@ -296,6 +336,7 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
             setState(() { _interimText = text; });
           },
         );
+        setState(() { _debugState = _sttService!.debugState; });
 
         if (_livePreview) {
           // Start browser Web Speech for live text preview
@@ -368,7 +409,7 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
       body: SafeArea(
         child: Column(
           children: [
-            // ── App Bar ──
+
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
               child: Row(
@@ -381,7 +422,11 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
                   const Expanded(
                     child: Text('Meeting', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
                   ),
-                  if (_detectedWorkflows.isNotEmpty) _proposalButton(),
+                  if (_transcript.isNotEmpty && !_isRecording) ...[
+                    _minutesButton(),
+                    const SizedBox(width: 8),
+                    _proposalButton(),
+                  ],
                   if (_detectedWorkflows.isNotEmpty) _followUpButton(),
                 ],
               ),
@@ -389,6 +434,15 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
 
             // ── Error Message ──
             if (_errorMessage != null) _errorBanner(),
+
+            // Debug state banner (hidden in production)
+            // if (_debugState.isNotEmpty)
+            //   Container(
+            //     width: double.infinity,
+            //     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            //     color: const Color(0xFF1a1a2e),
+            //     child: Text('🔍 $_debugState', style: const TextStyle(color: Color(0xFF00D2D3), fontSize: 12, fontFamily: 'monospace')),
+            //   ),
 
             // ── Live Recording Indicator ──
             if (_isRecording) _recordingIndicator(),
@@ -1036,7 +1090,7 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
         child: InkWell(
           borderRadius: BorderRadius.circular(10),
           onTap: () => Navigator.push(context, MaterialPageRoute(
-              builder: (_) => ProposalScreen(meetingId: widget.meetingId ?? 'new'))),
+              builder: (_) => ProposalScreen(meetingId: widget.meetingId ?? 'new', transcript: _transcript))),
           child: const Padding(
             padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             child: Row(
@@ -1045,6 +1099,36 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
                 Icon(Icons.description, size: 16, color: Colors.white),
                 SizedBox(width: 6),
                 Text('Proposal', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _minutesButton() {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF16161D),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF00E676)),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => Navigator.push(context, MaterialPageRoute(
+              builder: (_) => MinutesScreen(meetingId: widget.meetingId ?? 'new', transcript: _transcript))),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.note_alt_outlined, size: 16, color: Color(0xFF00E676)),
+                SizedBox(width: 6),
+                Text('Minutes', style: TextStyle(color: Color(0xFF00E676), fontWeight: FontWeight.w600, fontSize: 13)),
               ],
             ),
           ),
@@ -1176,30 +1260,131 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
       );
     }
 
-    // Default - start button
+    // Default - start button + text input link
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
       decoration: const BoxDecoration(
         color: Color(0xFF0D0D12),
         border: Border(top: BorderSide(color: Color(0xFF2A2A3A))),
       ),
-      child: SizedBox(
-        width: double.infinity,
-        height: 56,
-        child: FilledButton.icon(
-          onPressed: _toggleRecording,
-          icon: const Icon(Icons.mic_rounded, size: 24),
-          label: const Text('Start', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF6C5CE7),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: FilledButton.icon(
+              onPressed: _limitReached ? _showUpgradeModal : _toggleRecording,
+              icon: Icon(_limitReached ? Icons.lock_outline : Icons.mic_rounded, size: 24),
+              label: Text(
+                _limitReached ? 'Upgrade to Pro' : (_meetingsRemaining <= 2 ? 'Start ($_meetingsRemaining left)' : 'Start'),
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: _limitReached ? const Color(0xFF2A2A3A) : const Color(0xFF6C5CE7),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+            ),
           ),
-        ),
+          const SizedBox(height: 10),
+          Center(
+            child: TextButton.icon(
+              onPressed: () => context.push('/text-input'),
+              icon: const Icon(Icons.edit_note, size: 16),
+              label: const Text('Or type your meeting notes instead', style: TextStyle(fontSize: 12)),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF8B8BA0),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
   /// Save meeting to local storage
+  /// Check free tier limit and update state
+  Future<void> _checkFreeTierLimit() async {
+    final auth = ref.read(authProvider);
+    if (!auth.isAuthenticated) return;
+    try {
+      final response = await http.get(
+        Uri.parse('${auth.apiUrl}/api/fingerprint/status'),
+        headers: auth.authHeaders,
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        setState(() {
+          _limitReached = data['limit_reached'] ?? false;
+          _meetingsRemaining = data['remaining'] ?? 5;
+        });
+      }
+    } catch (_) {}
+  }
+
+  /// Show upgrade modal when free tier limit is reached
+  void _showUpgradeModal() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF16161D),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.lock_outline, color: Color(0xFF6C5CE7)),
+            SizedBox(width: 10),
+            Text('Free Limit Reached', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'You\'ve used all 5 free meetings!',
+              style: TextStyle(color: Colors.white, fontSize: 16),
+            ),
+            SizedBox(height: 12),
+            Text(
+              'Upgrade to Pro for:',
+              style: TextStyle(color: Color(0xFF8B8BA0)),
+            ),
+            SizedBox(height: 8),
+            _ProFeature('\u2714\uFE0F  Unlimited meetings'),
+            _ProFeature('\u2714\uFE0F  AI proposals'),
+            _ProFeature('\u2714\uFE0F  Speaker diarization'),
+            _ProFeature('\u2714\uFE0F  Priority processing'),
+            SizedBox(height: 8),
+            Text(
+              'Or delete old meetings to free up slots.',
+              style: TextStyle(color: Color(0xFF8B8BA0), fontSize: 13),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Maybe Later', style: TextStyle(color: Color(0xFF8B8BA0))),
+          ),
+          Container(
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(colors: [Color(0xFF6C5CE7), Color(0xFF00D2D3)]),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                // TODO: Navigate to pricing/upgrade page
+              },
+              child: const Text('Upgrade to Pro', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<String?> _saveMeetingToBackend(String transcript, String? serverMeetingId) async {
     if (transcript.trim().isEmpty) return null;
     final auth = ref.read(authProvider);
@@ -1223,7 +1408,15 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
         final data = jsonDecode(response.body);
         return data['id'] as String?;
       }
-    } catch (_) {}
+      if (response.statusCode == 403) {
+        // Free tier limit — meeting not saved but transcript still shown
+        debugPrint('[Clozr] Meeting save blocked: free tier limit reached');
+        return null;
+      }
+      debugPrint('[Clozr] Meeting save failed: ${response.statusCode} ${response.body.substring(0, response.body.length > 200 ? 200 : response.body.length)}');
+    } catch (e) {
+      debugPrint('[Clozr] Meeting save error: $e');
+    }
     return null;
   }
 
@@ -1268,7 +1461,7 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
     if (_summary.isNotEmpty) text.writeln('Summary: $_summary');
     text.writeln();
     text.writeln(_transcript.trim());
-    if (_detectedWorkflows.isNotEmpty) {
+    if (_transcript.isNotEmpty && !_isRecording) {
       text.writeln();
       text.writeln('--- Detected Workflows ---');
       for (final w in _detectedWorkflows) {
@@ -1588,7 +1781,7 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
                   onPressed: () {
                     Navigator.pop(context);
                     Navigator.push(context, MaterialPageRoute(
-                        builder: (_) => ProposalScreen(meetingId: widget.meetingId ?? 'new')));
+                        builder: (_) => ProposalScreen(meetingId: widget.meetingId ?? 'new', transcript: _transcript)));
                   },
                   icon: const Icon(Icons.description),
                   label: const Text('Add to Proposal', style: TextStyle(fontWeight: FontWeight.w600)),
@@ -1619,6 +1812,19 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ProFeature extends StatelessWidget {
+  final String text;
+  const _ProFeature(this.text);
+  
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Text(text, style: const TextStyle(color: Color(0xFF00D2D3), fontSize: 14)),
     );
   }
 }
