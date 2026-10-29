@@ -1356,6 +1356,10 @@ async def transcribe_with_diarization(
         raise HTTPException(400, "No audio file provided. Send as multipart form field 'audio'.")
 
     content = await audio_file.read()
+    if len(content) == 0:
+        raise HTTPException(400, "Audio file is empty — recording may have failed. Try recording again.")
+    if len(content) < 100:
+        raise HTTPException(400, f"Audio file too small ({len(content)} bytes) — recording may be corrupted. Try again.")
     if len(content) > 100 * 1024 * 1024:  # Deepgram limit is larger
         raise HTTPException(400, "Audio file too large (max 100MB)")
 
@@ -1364,15 +1368,21 @@ async def transcribe_with_diarization(
     filename = os.path.basename(raw_filename).replace("..", "").strip()
     if "/" in filename or "\\" in filename:
         filename = "audio.webm"
-    content_type = audio_file.content_type or "audio/webm"
-
     # Deepgram accepts: mp3, wav, m4a, ogg, opus, webm, flac, etc.
     # Auto-detect from content type or filename
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "webm"
-    # Map webm to webm for Deepgram (it handles it)
     if ext not in {"mp3", "wav", "m4a", "ogg", "opus", "webm", "flac", "mp4"}:
         ext = "webm"
-        content_type = "audio/webm"
+
+    # Fix content-type to match the actual audio format
+    # Safari/iOS sends audio/mp4 for m4a recordings — Deepgram needs the right one
+    ct_map = {
+        "mp3": "audio/mp3", "wav": "audio/wav", "m4a": "audio/mp4",
+        "ogg": "audio/ogg", "opus": "audio/opus", "webm": "audio/webm",
+        "flac": "audio/flac", "mp4": "audio/mp4",
+    }
+    content_type = ct_map.get(ext, "audio/webm")
+    logging.info(f"Deepgram STT: ext={ext}, content_type={content_type}, size={len(content)} bytes")
 
     try:
         import httpx
@@ -1381,7 +1391,6 @@ async def transcribe_with_diarization(
                 "https://api.deepgram.com/v1/listen",
                 headers={
                     "Authorization": f"Token {DEEPGRAM_API_KEY}",
-                    "Content-Type": content_type,
                 },
                 params={
                     "model": "nova-3",

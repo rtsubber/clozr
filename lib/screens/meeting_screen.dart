@@ -233,15 +233,18 @@ class _MeetingScreenState extends ConsumerState<MeetingScreen> with SingleTicker
     if (_isRecording) {
       setState(() => _isRecording = false);
       
-      // Stop live preview
-      _stopLivePreview();
-      setState(() { _debugState = 'Stopped recording. Checking STT service...'; });
+      // STOP MEDIARECORDER FIRST — capture audio before killing mic stream
+      // (stopping live preview first kills the shared mic, MediaRecorder gets 0 bytes)
+      setState(() { _debugState = 'Stopped recording. Capturing audio...'; });
       
       if (_sttService != null) {
         try {
           // Stop recording and transcribe via server
           setState(() { _isAnalyzing = true; _debugState = _sttService!.debugState; });
           final result = await _sttService!.stopRecording();
+          
+          // NOW stop live preview (Web Speech API) — audio already safely captured
+          _stopLivePreview();
           final transcript = result['transcript'] as String? ?? '';
           setState(() { _debugState = _sttService!.debugState; });
           // segments available if needed: result['segments'] as List? ?? [];
